@@ -1,5 +1,29 @@
 # CHANGELOG
 
+## 1.0.1 (2026-08-07)
+
+### Behoben
+
+- **OSName-Soft-Check (Build-USB.ps1 + boot/Start-Hephaistos.ps1) war zu streng:**
+  Die installierte OSD-Modulversion listet den Katalog als VOLLNAMEN
+  (`<OSName> <Sprache> <Aktivierung> <Build>`, z. B.
+  `Windows 11 25H2 x64 de-de Retail 26200.8653`), während Sprache und
+  Aktivierung bei `Start-OSDCloud` separate Parameter sind. Der Exact-Match
+  gegen die Kurzform `Windows 11 25H2 x64` schlug deshalb fälschlich fehl —
+  im WinPE hätte das bei JEDEM Boot eine gelbe Warnung + Rückfrage erzeugt.
+  Beide Checks matchen jetzt komponentenweise: OK, wenn für jede konfigurierte
+  Sprache ein Katalogeintrag mit OSName-Präfix + Sprache + Aktivierung existiert.
+  `OSName` in `deploy.json` bleibt bewusst die Kurzform (der Vollname würde die
+  Sprache hart verdrahten und das Sprachmenü aushebeln).
+
+### Verifiziert
+
+- **§4.2-Verifikation erledigt:** `Get-OSDCloudOperatingSystems` (Admin-PC,
+  aktuelle OSD-Modulversion) listet `Windows 11 25H2 x64` für de-de, fr-fr und
+  pl-pl jeweils als Retail, Build **26200.8653** (≥ MinBuild 26200). Damit ist
+  der offene Punkt aus 1.0.0 abgehakt; verbleibt nur noch der reale
+  `Start-OSDCloud`-Lauf auf Hardware.
+
 ## 1.0.0 (2026-08-07)
 
 Erstes HEPHAISTOS-Release: Port des produktiven USB-Toolkits

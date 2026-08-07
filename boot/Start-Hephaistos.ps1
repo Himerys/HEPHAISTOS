@@ -15,7 +15,7 @@
         [7] Neustart via wpeutil reboot (10-Sekunden-Countdown)
     Status pro Gerät: <Stick>\Logs\<ServiceTag>\state\*.done (Flag-Namen wie im Original).
 .NOTES
-    HEPHAISTOS v1.0.0 - portiert aus USB_ScriptTool Rev05 (START-ONBOARDING.cmd +
+    HEPHAISTOS v1.0.1 - portiert aus USB_ScriptTool Rev05 (START-ONBOARDING.cmd +
     SLG-Onboarding.ps1). PowerShell 5.1. UTF-8 mit BOM (Pflicht für PS 5.1 + Umlaute).
     Bugfix (Handoff 7.1): step2_osinstall.started wird ERST unmittelbar vor
     Start-OSDCloud geschrieben - nicht schon bei der Menüauswahl wie im alten
@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.0.0'
+$Script:HephVersion = '1.0.1'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots je Phase - Boot-Phase: <Stick>:\_HEPHAISTOS\Fallback. Die Lib selbst
 # kann vom Stick kommen, deshalb Minimal-Stick-Suche VOR dem Lib-Load (DriveInfo-
@@ -195,8 +195,25 @@ if (Get-Command -Name Get-OSDCloudOperatingSystems -ErrorAction SilentlyContinue
     try {
         Write-HephDim ('Prüfe "{0}" gegen Get-OSDCloudOperatingSystems ...' -f $osName)
         $osdNames = @(Get-OSDCloudOperatingSystems | ForEach-Object { [string]$_.Name } | Where-Object { $_ })
-        if ($osdNames -contains $osName) {
-            Write-HephOk ('OS-Name "{0}" ist im OSD-Modul gelistet.' -f $osName)
+        # Neuere OSD-Kataloge listen VOLLNAMEN ("<OSName> <Sprache> <Aktivierung> <Build>",
+        # z.B. "Windows 11 25H2 x64 de-de Retail 26200.8653"). Sprache/Aktivierung sind
+        # bei uns separate Start-OSDCloud-Parameter - deshalb gilt der Katalog auch dann
+        # als abgedeckt, wenn fuer JEDE konfigurierte Sprache ein Eintrag existiert, der
+        # mit dem OSName beginnt und Sprache + Aktivierung enthaelt (Praefix-Matching).
+        $osdOk = ($osdNames -contains $osName)
+        if (-not $osdOk) {
+            $cfgLangs = @($cfg.Languages.PSObject.Properties | ForEach-Object { [string]$_.Value.OSLanguage } | Where-Object { $_ })
+            $osdAct   = [string]$cfg.OS.OSActivation
+            if ($cfgLangs.Count -gt 0) {
+                $osdOk = $true
+                foreach ($lg in $cfgLangs) {
+                    $hit = @($osdNames | Where-Object { $_ -like ($osName + '*') -and $_ -like ('*' + $lg + '*') -and $_ -like ('*' + $osdAct + '*') })
+                    if ($hit.Count -eq 0) { $osdOk = $false; break }
+                }
+            }
+        }
+        if ($osdOk) {
+            Write-HephOk ('OS-Name "{0}" ist im OSD-Modul abgedeckt (alle Sprachen + {1}).' -f $osName, $cfg.OS.OSActivation)
         } else {
             Write-HephWarn ('OS-Name "{0}" ist im installierten OSD-Modul NICHT gelistet!' -f $osName)
             $token = $null

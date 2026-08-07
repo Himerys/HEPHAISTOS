@@ -18,7 +18,7 @@
            Timeout: gelber Hinweis auf die GroupTag-Gruppenzuordnung, KEIN Neustart.
     Erwartet die geladene HEPHAISTOS-Bibliothek (lib\Hephaistos.Common.ps1) im Scope.
 .NOTES
-    HEPHAISTOS v1.0.0 - portiert aus USB_ScriptTool Rev05
+    HEPHAISTOS v1.0.1 - portiert aus USB_ScriptTool Rev05
     (SLG-Onboarding.ps1 / Invoke-Step3Hash + Scripts\Export-AutopilotHash.ps1 Rev02).
     Benötigt PowerShell 5.1 (OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM gespeichert
     (Pflicht für PS 5.1 + Umlaute).

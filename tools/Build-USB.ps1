@@ -16,7 +16,7 @@
     Nur Stick-Inhalte aktualisieren (ohne WinPE/USB neu zu bauen):
         ... -SkipUsbCreation
 .NOTES
-    HEPHAISTOS v1.0.0 - portiert/erweitert aus USB_ScriptTool Rev05 (Handoff §8).
+    HEPHAISTOS v1.0.1 - portiert/erweitert aus USB_ScriptTool Rev05 (Handoff §8).
     PowerShell 5.1. UTF-8 mit BOM.
 #>
 #Requires -RunAsAdministrator
@@ -28,7 +28,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Script:HephVersion = '1.0.0'
+$Script:HephVersion = '1.0.1'
 
 # --- Repo-Checkout + zentrale Config (RawBase kommt NUR aus deploy.json) ----
 $RepoRoot   = Split-Path -Parent $PSScriptRoot
@@ -69,8 +69,24 @@ if (-not $SkipUsbCreation) {
     try {
         $osList = @(Get-OSDCloudOperatingSystems)
         $names  = @($osList | ForEach-Object { $_.Name })
-        if ($names -contains $OSName) {
-            Write-Host ('OK: "{0}" wird vom OSD-Modul gelistet.' -f $OSName) -ForegroundColor Green
+        # Neuere OSD-Kataloge listen VOLLNAMEN ("<OSName> <Sprache> <Aktivierung> <Build>",
+        # z.B. "Windows 11 25H2 x64 de-de Retail 26200.8653"). Sprache/Aktivierung sind
+        # separate Start-OSDCloud-Parameter -> Praefix-Matching: OK, wenn fuer JEDE
+        # konfigurierte Sprache ein Eintrag mit OSName-Praefix + Sprache + Aktivierung existiert.
+        $osdOk = ($names -contains $OSName)
+        if (-not $osdOk) {
+            $cfgLangs = @($Deploy.Languages.PSObject.Properties | ForEach-Object { [string]$_.Value.OSLanguage } | Where-Object { $_ })
+            $act      = [string]$Deploy.OS.OSActivation
+            if ($cfgLangs.Count -gt 0) {
+                $osdOk = $true
+                foreach ($lg in $cfgLangs) {
+                    $hit = @($names | Where-Object { $_ -like ($OSName + '*') -and $_ -like ('*' + $lg + '*') -and $_ -like ('*' + $act + '*') })
+                    if ($hit.Count -eq 0) { $osdOk = $false; break }
+                }
+            }
+        }
+        if ($osdOk) {
+            Write-Host ('OK: "{0}" ist im OSD-Katalog abgedeckt (alle Sprachen + {1}).' -f $OSName, $Deploy.OS.OSActivation) -ForegroundColor Green
         } else {
             Write-Host ('WARNUNG: "{0}" ist NICHT in der OSD-Liste!' -f $OSName) -ForegroundColor Yellow
             $candidates = @($names | Where-Object { $_ -match '25H2' })
