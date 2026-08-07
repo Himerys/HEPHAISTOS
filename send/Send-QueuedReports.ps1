@@ -13,7 +13,7 @@
             (Object Model Guard). Das ist erwartetes Verhalten: Zulassen klicken.
     Pro versendeter Datei wird <Report>.sent geschrieben.
 .NOTES
-    HEPHAISTOS v1.0.1 - portiert aus USB_ScriptTool Rev05 (Send-QueuedReports.ps1 Rev04).
+    HEPHAISTOS v1.0.2 - portiert aus USB_ScriptTool Rev05 (Send-QueuedReports.ps1 Rev04).
     PowerShell 5.1. UTF-8 mit BOM.
     Beibehaltene Rev04-Logik:
       - Versandreihenfolge: Graph zuerst, Outlook-COM nur als Fallback.
@@ -30,7 +30,7 @@
 $ErrorActionPreference = 'Stop'
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.0.1'
+$Script:HephVersion = '1.0.2'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots für die Send-Phase: das Script kann aus der Stick-Spiegelkopie
 # (<Stick>:\_HEPHAISTOS\Fallback\send\) laufen -> Wurzel relativ zum Script;

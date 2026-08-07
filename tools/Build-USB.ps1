@@ -16,7 +16,7 @@
     Nur Stick-Inhalte aktualisieren (ohne WinPE/USB neu zu bauen):
         ... -SkipUsbCreation
 .NOTES
-    HEPHAISTOS v1.0.1 - portiert/erweitert aus USB_ScriptTool Rev05 (Handoff §8).
+    HEPHAISTOS v1.0.2 - portiert/erweitert aus USB_ScriptTool Rev05 (Handoff §8).
     PowerShell 5.1. UTF-8 mit BOM.
 #>
 #Requires -RunAsAdministrator
@@ -28,7 +28,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Script:HephVersion = '1.0.1'
+$Script:HephVersion = '1.0.2'
 
 # --- Repo-Checkout + zentrale Config (RawBase kommt NUR aus deploy.json) ----
 $RepoRoot   = Split-Path -Parent $PSScriptRoot
@@ -54,6 +54,35 @@ if ($RawBase -match 'CHANGE-ME-ORG') {
 }
 
 if (-not $SkipUsbCreation) {
+    # --- Schritt 0: Windows ADK + WinPE-Add-on pruefen ------------------------
+    # New-OSDCloudTemplate braucht BEIDE Installer (haeufige Stolperfalle:
+    # nur das ADK installiert, das WinPE-Add-on vergessen -> "Could not get
+    # ADK going"). Download-Seite:
+    #   https://learn.microsoft.com/en-us/windows-hardware/get-started/adk-install
+    Write-Host '==> Voraussetzung pruefen: Windows ADK + WinPE-Add-on' -ForegroundColor Cyan
+    $kitsRoot = $null
+    try {
+        $kitsRoot = (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows Kits\Installed Roots' -ErrorAction Stop).KitsRoot10
+    } catch { }
+    $adkOk   = $false
+    $winpeOk = $false
+    if ($kitsRoot) {
+        $adkOk   = Test-Path (Join-Path $kitsRoot 'Assessment and Deployment Kit\Deployment Tools')
+        $winpeOk = Test-Path (Join-Path $kitsRoot 'Assessment and Deployment Kit\Windows Preinstallation Environment')
+    }
+    if (-not ($adkOk -and $winpeOk)) {
+        Write-Host 'FEHLER: Windows ADK ist nicht (vollstaendig) installiert.' -ForegroundColor Red
+        Write-Host ('  Deployment Tools gefunden: {0}   WinPE-Add-on gefunden: {1}' -f $adkOk, $winpeOk) -ForegroundColor Yellow
+        Write-Host '  Es werden ZWEI Installer benoetigt (in dieser Reihenfolge):' -ForegroundColor Yellow
+        Write-Host '    1) Windows ADK (adksetup.exe) - Feature "Deployment Tools" reicht' -ForegroundColor Yellow
+        Write-Host '    2) Windows PE add-on (adkwinpesetup.exe) - eigener, separater Download!' -ForegroundColor Yellow
+        Write-Host '  Download-Seite: https://learn.microsoft.com/en-us/windows-hardware/get-started/adk-install' -ForegroundColor Yellow
+        Write-Host '  Danach eine NEUE Admin-PowerShell oeffnen und dieses Script erneut starten.' -ForegroundColor Yellow
+        exit 1
+    }
+    Write-Host ('ADK gefunden: {0} (Deployment Tools + WinPE-Add-on vorhanden)' -f $kitsRoot) -ForegroundColor Green
+    Write-Host ''
+
     # --- Schritt 1: OSD-Modul -------------------------------------------------
     Write-Host '==> OSD-Modul pruefen/installieren' -ForegroundColor Cyan
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12

@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 1.0.2 (2026-08-07)
+
+### Neu
+
+- **Build-USB.ps1 Schritt 0 — ADK-Vorprüfung:** `New-OSDCloudTemplate` scheitert
+  ohne Windows ADK mit der wenig hilfreichen Meldung "Could not get ADK going".
+  Das Script prüft jetzt VOR allen Aktionen, ob Deployment Tools UND das
+  separat zu installierende WinPE-Add-on vorhanden sind (Registry
+  `Installed Roots\KitsRoot10` + Ordnerprüfung), und gibt sonst eine deutsche
+  Anleitung mit beiden Downloads aus (häufige Stolperfalle: nur adksetup.exe
+  installiert, adkwinpesetup.exe vergessen).
+
 ## 1.0.1 (2026-08-07)
 
 ### Behoben
