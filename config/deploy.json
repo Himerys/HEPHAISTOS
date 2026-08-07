@@ -1,0 +1,15 @@
+{
+  "ConfigVersion": "2.0.0",
+  "OS": { "OSName": "Windows 11 25H2 x64", "OSEdition": "Pro", "OSActivation": "Retail" },
+  "Languages": {
+    "1": { "Label": "Deutsch (DE)",  "OSLanguage": "de-de" },
+    "2": { "Label": "Francais (FR)", "OSLanguage": "fr-fr" },
+    "3": { "Label": "Polski (PL)",   "OSLanguage": "pl-pl" }
+  },
+  "DefaultLanguageKey": "1",
+  "MinBuild": 26200,
+  "RemoveWinRE": false,
+  "GroupTags": ["SLGDE", "SLGFR", "SLGPL", "SLGTEST"],
+  "Report": { "TeamsAttachPdf": true },
+  "Repo": { "RawBase": "https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main" }
+}

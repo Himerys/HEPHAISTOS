@@ -1,0 +1,8 @@
+# HEPHAISTOS - das Repo ist public: niemals Secrets oder Geraetedaten einchecken (Handoff Abschnitt 6.3)
+*secrets*
+!tools/secrets.template.json
+!tools/New-HephaistosSecrets.ps1
+HEPHAISTOS-Secrets/
+Logs/
+HWID/
+*.log

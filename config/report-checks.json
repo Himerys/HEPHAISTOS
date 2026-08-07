@@ -1,0 +1,28 @@
+{
+  "_hinweis": "Abnahme-Checks einzeln an-/abschalten. Fehlender Key = Check aktiv. false = Check erscheint im Report als SKIPPED ('per Config deaktiviert') und zaehlt weder in Exit-Code noch Summary.",
+  "LocalAdminAccount": "intuneadm",
+  "Checks": {
+    "hostname-convention": true,
+    "hybrid-join-azuread": true,
+    "hybrid-join-domain": true,
+    "entra-prt": true,
+    "tpm-20": true,
+    "secure-boot": true,
+    "bios-admin-password": true,
+    "bitlocker-protection": true,
+    "bitlocker-recovery-protector": true,
+    "bitlocker-escrow-845": true,
+    "service-netskope": true,
+    "service-sentinelone": true,
+    "service-intune-ime": true,
+    "netskope-tunnel": true,
+    "av-roles": true,
+    "company-portal": true,
+    "windows-min-build": true,
+    "windows-activation": true,
+    "pending-reboot": true,
+    "driver-errors": true,
+    "timezone-country": true,
+    "windows-update-scan": true
+  }
+}

@@ -1,0 +1,5 @@
+# CMD-Dateien MUESSEN als CRLF im Repo liegen: oobe.cmd wird zur Laufzeit
+# byte-identisch von GitHub raw geladen, und cmd.exe-Batch-Parsing ist nur
+# fuer CRLF garantiert. -text = keine EOL-Normalisierung, Bytes bleiben wie
+# committet.
+*.cmd -text
