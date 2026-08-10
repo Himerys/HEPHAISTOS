@@ -1,5 +1,27 @@
 # CHANGELOG
 
+## 1.0.3 (2026-08-10) — Erkenntnisse aus dem ersten Hardware-Test (Dell Pro 16 Plus)
+
+### Behoben
+
+- **BIOS-Schritt: Teilerfolg wurde als Fehlschlag gewertet.** Praxisfund: cctk
+  endet mit `CCTK STATUS CODE : FAILURE` (RC 146), wenn auch nur EINE
+  hardwareabhängige Option nicht anwendbar ist (beobachtet: `Wimob` auf einem
+  Gerät ohne WWAN-Modul) — obwohl alle übrigen Einstellungen inkl.
+  BIOS-Admin-Passwort gesetzt wurden. Der Schritt wertet bei RC != 0 jetzt das
+  CCTK-Log aus: nicht anwendbare Optionen ⇒ GELB („angewendet MIT HINWEISEN",
+  Flag `step1_bios.done` wird gesetzt, Optionen werden benannt);
+  passwort-relevante oder unbekannte Fehler bleiben ROT. Sicherheitsnetz
+  unverändert: Die Abnahme prüft das BIOS-Admin-Passwort separat.
+- **Schritt-2-Erkennung scheiterte am WinPE-Zeitzonen-Versatz.** Praxisfund:
+  OSDCloud-WinPE steht standardmäßig auf Pacific Time; FAT/exFAT-Sticks
+  speichern Ortszeit ohne Zonenbezug. Der Flag-Zeitstempel lag dadurch
+  scheinbar ~10 h in der Zukunft, das echte Installationsdatum wirkte „älter"
+  ⇒ `step2_osinstall.done` wurde nie gesetzt. Zwei Ebenen behoben:
+  (1) Boot stellt WinPE per `tzutil` auf CET (best effort; Flotte DE/FR/PL ist
+  einheitlich CET/CSET), (2) die Erkennung bekommt ein 26-h-Toleranzfenster —
+  ein Werks-OS ist Tage bis Wochen älter und fällt weiterhin sicher durch.
+
 ## 1.0.2 (2026-08-07)
 
 ### Neu

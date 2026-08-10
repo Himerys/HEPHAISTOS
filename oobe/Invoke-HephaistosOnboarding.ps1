@@ -14,7 +14,7 @@
            (bei zugewiesenem Profil: automatischer Neustart in das Provisioning)
     Status pro Gerät: <Stick>:\Logs\<ServiceTag>\state\*.done
 .NOTES
-    HEPHAISTOS v1.0.2 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
+    HEPHAISTOS v1.0.3 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
     Benötigt PowerShell 5.1 (OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM gespeichert
     (Pflicht für PS 5.1 + Umlaute).
 #>
@@ -25,7 +25,7 @@ $Check = [char]0x2713   # Haken-Symbol, zur Laufzeit erzeugt (ASCII-sichere Quel
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.0.2'
+$Script:HephVersion = '1.0.3'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots dieser Phase (OOBE): zuerst die gestagte Kopie auf C:, dann der
 # Stick. Der Stick wird hier per Minimal-Suche gefunden (DriveInfo-Schleife nach
@@ -164,7 +164,12 @@ if (-not (Test-Step -StateDir $StateDir -Name 'step2_osinstall.done')) {
     $startedFlag = Get-StepFlag -StateDir $StateDir -Name 'step2_osinstall.started'
     if ((Test-Path $startedFlag) -and $Script:InstallDate) {
         $startedTime = (Get-Item $startedFlag).LastWriteTimeUtc
-        if ($Script:InstallDate -gt $startedTime) {
+        # Zeitzonen-Falle (Praxisfund 08/2026): WinPE steht standardmäßig auf
+        # Pacific Time und FAT/exFAT-Sticks speichern Ortszeit ohne Zonenbezug -
+        # der Flag-Zeitstempel kann dadurch um Stunden "in der Zukunft" liegen
+        # (beobachtet: +10 h). Toleranzfenster 26 h: ein Werks-OS ist Tage bis
+        # Wochen älter und fällt weiterhin sicher durch die Prüfung.
+        if ($Script:InstallDate -gt $startedTime.AddHours(-26)) {
             Set-Step -StateDir $StateDir -Name 'step2_osinstall.done' -Detail ("Neuinstallation erkannt: OS-InstallDate {0:yyyy-MM-dd HH:mm}Z liegt nach Wipe-Start {1:yyyy-MM-dd HH:mm}Z" -f $Script:InstallDate, $startedTime)
             Write-HephOk 'Windows-Installation automatisch als erledigt erkannt.'
         }
@@ -178,6 +183,8 @@ if (-not (Test-Step -StateDir $StateDir -Name 'step2_osinstall.done')) {
     Write-HephWarn ("  Wipe-Flag vom Stick (WinPE): {0}" -f $(if (Test-Path $startedFlag) { ('vorhanden, {0:yyyy-MM-dd HH:mm}Z' -f (Get-Item $startedFlag).LastWriteTimeUtc) } else { 'FEHLT' }))
     Write-HephWarn ("  OS-Installationsdatum:       {0}" -f $(if ($Script:InstallDate) { '{0:yyyy-MM-dd HH:mm}Z' -f $Script:InstallDate } else { 'unbekannt' }))
     Write-HephWarn '  Läuft hier noch das WERKS-OS? Dann Gerät vom Stick booten (F12) und neu installieren.'
+    Write-HephDim '  Hinweis: Liegt der Flag-Zeitstempel scheinbar in der Zukunft, ist das der'
+    Write-HephDim '  bekannte WinPE-Zeitzonen-Versatz - ab v1.0.3 durch Toleranzfenster abgedeckt.'
 }
 
 # ============================================================ Kontext für die Schritte

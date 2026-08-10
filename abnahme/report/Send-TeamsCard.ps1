@@ -14,7 +14,7 @@
     BEWUSST 'slg' - der bestehende Power-Automate-Flow parst genau dieses
     Feld (Flow-Kompatibilität, NICHT in 'hephaistos' umbenennen).
 .NOTES
-    HEPHAISTOS v1.0.2 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
+    HEPHAISTOS v1.0.3 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
     Benötigt PowerShell 5.1. Datei ist UTF-8 MIT BOM gespeichert (Pflicht für PS 5.1 + Umlaute).
 #>
 

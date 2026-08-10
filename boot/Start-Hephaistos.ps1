@@ -15,7 +15,7 @@
         [7] Neustart via wpeutil reboot (10-Sekunden-Countdown)
     Status pro Gerät: <Stick>\Logs\<ServiceTag>\state\*.done (Flag-Namen wie im Original).
 .NOTES
-    HEPHAISTOS v1.0.2 - portiert aus USB_ScriptTool Rev05 (START-ONBOARDING.cmd +
+    HEPHAISTOS v1.0.3 - portiert aus USB_ScriptTool Rev05 (START-ONBOARDING.cmd +
     SLG-Onboarding.ps1). PowerShell 5.1. UTF-8 mit BOM (Pflicht für PS 5.1 + Umlaute).
     Bugfix (Handoff 7.1): step2_osinstall.started wird ERST unmittelbar vor
     Start-OSDCloud geschrieben - nicht schon bei der Menüauswahl wie im alten
@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.0.2'
+$Script:HephVersion = '1.0.3'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots je Phase - Boot-Phase: <Stick>:\_HEPHAISTOS\Fallback. Die Lib selbst
 # kann vom Stick kommen, deshalb Minimal-Stick-Suche VOR dem Lib-Load (DriveInfo-
@@ -79,6 +79,14 @@ if (-not $libPath) {
 # ============================================================ Umgebung + Hilfsfunktionen
 # WinPE-Erkennung wie im Original (START-ONBOARDING.cmd: Registry-Key MiniNT).
 $Script:IsWinPE = Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\MiniNT'
+
+# Zeitzonen-Korrektur (Praxisfund 08/2026): OSDCloud-WinPE steht standardmäßig
+# auf Pacific Time - alle Zeitstempel (State-Flags, install.json) wären damit um
+# Stunden verschoben. Die Flotte ist DE/FR/PL = einheitlich CET/CEST, daher
+# best effort auf mitteleuropäische Zeit stellen.
+if ($Script:IsWinPE) {
+    try { & tzutil.exe /s 'W. Europe Standard Time' 2>$null | Out-Null } catch { }
+}
 
 function Invoke-HephReboot {
     # Neustart mit optionalem sichtbarem Countdown. In WinPE via wpeutil, sonst
