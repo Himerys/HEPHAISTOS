@@ -18,7 +18,7 @@
            Timeout: gelber Hinweis auf die GroupTag-Gruppenzuordnung, KEIN Neustart.
     Erwartet die geladene HEPHAISTOS-Bibliothek (lib\Hephaistos.Common.ps1) im Scope.
 .NOTES
-    HEPHAISTOS v1.0.3 - portiert aus USB_ScriptTool Rev05
+    HEPHAISTOS v1.0.4 - portiert aus USB_ScriptTool Rev05
     (SLG-Onboarding.ps1 / Invoke-Step3Hash + Scripts\Export-AutopilotHash.ps1 Rev02).
     Benötigt PowerShell 5.1 (OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM gespeichert
     (Pflicht für PS 5.1 + Umlaute).
@@ -168,9 +168,50 @@ if (-not $secrets) {
     }
 }
 
+# ============================================================ 4b) NEU (v1.0.4): Bereits in Autopilot registriert?
+# Doppelte Uploads vermeiden: Vor dem Upload wird die Seriennummer per Graph
+# gesucht (dieselbe Abfrage wie beim Polling). Existiert der Eintrag bereits,
+# wird der Upload übersprungen und direkt auf die Profilzuweisung gewartet.
+$alreadyRegistered = $false
+if ($secrets) {
+    try {
+        $chkToken = Get-GraphAppToken -Cfg $secrets
+        $chkUri   = "https://graph.microsoft.com/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?`$filter=contains(serialNumber,'{0}')" -f $serial
+        $chkResp  = Invoke-RestMethod -Method GET -Uri $chkUri -Headers @{ Authorization = "Bearer $chkToken" }
+        # Nur EXAKTER Serial-Treffer zählt (contains() ist unscharf - für das
+        # Überspringen des Uploads reicht ein Teilstring-Treffer NICHT).
+        $existing = $null
+        foreach ($d in @($chkResp.value)) {
+            if ([string]$d.serialNumber -eq $serial) { $existing = $d; break }
+        }
+        if ($existing) {
+            $alreadyRegistered = $true
+            $exTag = [string]$existing.groupTag
+            Write-HephOk ('Gerät ist bereits in Autopilot registriert (Serial {0}) - Upload wird übersprungen.' -f $serial)
+            if ($exTag -and ($exTag -ne $tag)) {
+                Write-HephWarn ("GroupTag-Abweichung: registriert '{0}', hier gewählt '{1}' - bei Bedarf im Intune-Portal ändern." -f $exTag, $tag)
+            } elseif ($exTag) {
+                Write-HephDim ('  GroupTag: {0}' -f $exTag)
+            } else {
+                # Eintrag OHNE GroupTag: Profilzuweisung über die dynamische Gruppe
+                # wird so nie greifen - deutlich warnen und den echten Zustand
+                # (nicht das hier gewählte Tag) ins State-Detail schreiben.
+                Write-HephWarn ("Registrierung hat KEIN GroupTag (hier gewählt: '{0}') - Tag im Intune-Portal nachtragen," -f $tag)
+                Write-HephWarn 'sonst bleibt die Profilzuweisung aus (Polling wird vermutlich in den Timeout laufen).'
+            }
+            Set-Step -StateDir $stateDir -Name 'step3_hash.done' -Detail ("Bereits in Autopilot registriert, GroupTag={0}" -f $(if ($exTag) { $exTag } else { 'KEINES (nachtragen!)' }))
+        }
+    } catch {
+        Write-HephDim ('Registrierungs-Vorabprüfung nicht möglich ({0}) - Upload wird normal versucht.' -f $_.Exception.Message)
+    }
+}
+
 # ============================================================ 5) Online-Upload via Get-WindowsAutopilotInfo
 # Port aus Invoke-Step3Hash: Script aus der PSGallery installieren und mit
 # App-Auth (bzw. interaktiv) aufrufen.
+if ($alreadyRegistered) {
+    Write-HephResult -Success $true -Text 'Autopilot-Hash: bereits registriert - Upload übersprungen.'
+} else {
 try {
     Enable-Tls12AndGallery
     if (-not (Get-InstalledScript -Name Get-WindowsAutopilotInfo -ErrorAction SilentlyContinue)) {
@@ -201,6 +242,7 @@ try {
     return
 }
 Write-HephResult -Success $true -Text 'Autopilot-Hash: Upload nach Intune abgeschlossen.'
+}
 
 # ============================================================ 6) NEU: Profilzuweisung pollen + Auto-Reboot (Handoff 4.6)
 # Nach dem Upload wartet HEPHAISTOS aktiv auf die Autopilot-Profilzuweisung und

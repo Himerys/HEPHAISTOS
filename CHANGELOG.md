@@ -1,5 +1,30 @@
 # CHANGELOG
 
+## 1.0.4 (2026-08-12) — Feedback aus der Testphase
+
+### Neu
+
+- **oobe.cmd fordert Adminrechte selbst an** (fltmc-Probe + UAC-Relaunch, wie
+  START-ABNAHME.cmd): In der OOBE-Konsole ändert sich nichts (bereits elevated),
+  aber Nachläufe aus dem fertigen Windows scheitern nicht mehr am fehlenden
+  Admin-Kontext (BIOS-Schritt braucht Elevation). Hinweis: gilt für neu
+  gestagte Geräte; bereits installierte Testgeräte tragen noch die alte Kopie
+  unter C:\OSDCloud\HEPHAISTOS\.
+- **Autopilot: Vorabprüfung auf bestehende Registrierung.** Vor dem Upload wird
+  die Seriennummer per Graph gesucht (exakter Treffer erforderlich). Bereits
+  registrierte Geräte überspringen den Upload (kein Doppel-Import), melden das
+  hinterlegte GroupTag (mit Warnung bei Abweichung zur aktuellen Auswahl) und
+  gehen direkt ins Assignment-Polling. Schlägt die Vorabprüfung fehl, läuft der
+  Upload normal weiter.
+
+### Behoben
+
+- **Schritt-2-Erkennung jetzt uhr-frei.** Primärer Nachweis ist die vom
+  Boot-Script NACH Start-OSDCloud auf das frische C: geschriebene
+  `install.json` (Seriennummern-Abgleich) — ein Werks-OS kann diese Datei nicht
+  besitzen, Zeitzonen/FAT-Zeitstempel spielen keine Rolle mehr. Der
+  Zeitstempel-Vergleich mit 26-h-Toleranz (1.0.3) bleibt als Fallback erhalten.
+
 ## 1.0.3 (2026-08-10) — Erkenntnisse aus dem ersten Hardware-Test (Dell Pro 16 Plus)
 
 ### Behoben
