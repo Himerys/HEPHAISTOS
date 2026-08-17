@@ -2,11 +2,22 @@
   "ConfigVersion": "2.0.0",
   "OS": { "OSName": "Windows 11 25H2 x64", "OSEdition": "Pro", "OSActivation": "Retail" },
   "Languages": {
-    "1": { "Label": "Deutsch (DE)",  "OSLanguage": "de-de" },
-    "2": { "Label": "Francais (FR)", "OSLanguage": "fr-fr" },
-    "3": { "Label": "Polski (PL)",   "OSLanguage": "pl-pl" }
+    "1": { "Label": "Deutsch (DE)",  "OSLanguage": "de-de", "GroupTag": "SLGDE" },
+    "2": { "Label": "Francais (FR)", "OSLanguage": "fr-fr", "GroupTag": "SLGFR" },
+    "3": { "Label": "Polski (PL)",   "OSLanguage": "pl-pl", "GroupTag": "SLGPL" }
   },
   "DefaultLanguageKey": "1",
+  "Bios": {
+    "StorageMode": "Ahci",
+    "DefaultPackage": "CCTK",
+    "Packages": {
+      "Pro 16 Plus": "CCTK",
+      "Pro 13 Plus": "CCTK-Pro13Plus",
+      "Pro 14 Plus": "CCTK-Pro14Plus",
+      "Pro 14 Premium": "CCTK-Pro14Premium",
+      "Latitude 5550": "CCTK-Latitude5550"
+    }
+  },
   "MinBuild": 26200,
   "RemoveWinRE": false,
   "GroupTags": ["SLGDE", "SLGFR", "SLGPL", "SLGTEST"],

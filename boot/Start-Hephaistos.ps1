@@ -15,7 +15,7 @@
         [7] Neustart via wpeutil reboot (10-Sekunden-Countdown)
     Status pro Gerät: <Stick>\Logs\<ServiceTag>\state\*.done (Flag-Namen wie im Original).
 .NOTES
-    HEPHAISTOS v1.0.4 - portiert aus USB_ScriptTool Rev05 (START-ONBOARDING.cmd +
+    HEPHAISTOS v1.1.0 - portiert aus USB_ScriptTool Rev05 (START-ONBOARDING.cmd +
     SLG-Onboarding.ps1). PowerShell 5.1. UTF-8 mit BOM (Pflicht für PS 5.1 + Umlaute).
     Bugfix (Handoff 7.1): step2_osinstall.started wird ERST unmittelbar vor
     Start-OSDCloud geschrieben - nicht schon bei der Menüauswahl wie im alten
@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.0.4'
+$Script:HephVersion = '1.1.0'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots je Phase - Boot-Phase: <Stick>:\_HEPHAISTOS\Fallback. Die Lib selbst
 # kann vom Stick kommen, deshalb Minimal-Stick-Suche VOR dem Lib-Load (DriveInfo-
@@ -282,6 +282,34 @@ $lang      = [string]$langProp.Value.OSLanguage
 $langLabel = [string]$langProp.Value.Label
 Write-HephOk ('Sprache: {0} ({1})' -f $langLabel, $lang)
 
+# ============================================================ GroupTag-Vorauswahl (v1.1.0)
+# Aus der Sprache abgeleitet (Languages[n].GroupTag in deploy.json) - in der
+# OOBE-Phase genügt dann Enter. Die Auswahl bleibt dort weiterhin änderbar.
+$groupTagPre = $null
+if ($langProp.Value.PSObject.Properties['GroupTag']) { $groupTagPre = [string]$langProp.Value.GroupTag }
+$cfgTags = @()
+if ($cfg.GroupTags) { $cfgTags = @($cfg.GroupTags) }
+if ($cfgTags.Count -gt 0) {
+    Write-Host ''
+    Write-HephInfo 'Autopilot Group Tag (Vorauswahl für die OOBE-Phase):'
+    for ($i = 0; $i -lt $cfgTags.Count; $i++) {
+        $mark = ''
+        if ($groupTagPre -and ($cfgTags[$i] -ieq $groupTagPre)) { $mark = '   <- Vorschlag (aus der Sprache)' }
+        Write-Host ("  [{0}] {1}{2}" -f ($i + 1), $cfgTags[$i], $mark)
+    }
+    $defTag = $cfgTags[0]
+    if ($groupTagPre) { $defTag = $groupTagPre }
+    $selTag = (Read-Host ('Group Tag [Enter = {0}]' -f $defTag)).Trim()
+    $ti = 0
+    if ($selTag -and [int]::TryParse($selTag, [ref]$ti) -and $ti -ge 1 -and $ti -le $cfgTags.Count) {
+        $groupTagPre = $cfgTags[$ti - 1]
+    } else {
+        if ($selTag) { Write-HephWarn ('Ungültige Eingabe "{0}" - Vorschlag {1} übernommen (in der OOBE-Phase änderbar).' -f $selTag, $defTag) }
+        $groupTagPre = $defTag
+    }
+    Write-HephOk ('Group Tag: {0}' -f $groupTagPre)
+}
+
 # ============================================================ Wipe-Bestätigung
 # Port der LOESCHEN-Bestätigung aus START-ONBOARDING.cmd :Step2. Eine Disk-Auswahl
 # gibt es nicht mehr: OSDCloud ZTI wählt die interne Disk automatisch.
@@ -304,6 +332,105 @@ if ($confirm -ne 'LOESCHEN') {
     if (Confirm-Choice 'Gerät jetzt neu starten?') { Invoke-HephReboot }
     try { Stop-Transcript | Out-Null } catch { }
     exit 0
+}
+
+# ============================================================ Storage-Modus-Preflight (v1.1.0)
+# Praxisfund: Das Werks-BIOS steht auf RAID/VMD, Ziel ist AHCI/NVMe. Dieser
+# Wechsel darf NICHT nach der Windows-Installation passieren (der Boot-Treiber-
+# Stack passt dann nicht mehr -> INACCESSIBLE_BOOT_DEVICE). Deshalb wird der
+# Modus HIER, VOR Start-OSDCloud, geprüft und bei Bedarf umgestellt:
+# Disk leeren -> Modus setzen -> Neustart. Die leere Disk bootet automatisch
+# wieder vom Stick (kein F12 nötig); im zweiten Durchlauf passt der Modus.
+# Der volle BIOS-Schritt (Passwort usw.) bleibt in der OOBE-Phase.
+$storageTarget = 'Ahci'
+if ($cfg.Bios -and $cfg.Bios.StorageMode) { $storageTarget = [string]$cfg.Bios.StorageMode }
+if ($storageTarget -and ($storageTarget -notin @('Keep','None',''))) {
+    $cctkExe = $null
+    if ($usbRoot -and (Get-Command Get-HephBiosPackageDir -ErrorAction SilentlyContinue)) {
+        $toolsDir = Join-Path $usbRoot '_HEPHAISTOS\Tools'
+        $pkgInfo  = Get-HephBiosPackageDir -Model $Model -BiosConfig $(if ($cfg.Bios) { $cfg.Bios } else { $null }) -ToolsDir $toolsDir
+        if (Test-Path $pkgInfo.Dir) {
+            # x64-Binary bevorzugen: WinPE x64 hat kein WOW64 - eine X86-cctk.exe
+            # würde dort gar nicht starten.
+            $cctkExe = Get-ChildItem -Path $pkgInfo.Dir -Filter 'cctk.exe' -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object { if ($_.FullName -match '(?i)x86_64|amd64|x64') { 0 } else { 1 } } |
+                Select-Object -First 1
+        }
+    }
+    if (-not $cctkExe) {
+        Write-HephDim 'Storage-Modus-Preflight übersprungen (cctk.exe nicht auf dem Stick gefunden).'
+    } else {
+        $cur  = $null
+        $qOut = ''
+        try {
+            $qOut = (cmd /c ('"{0}" --embsataraid 2>&1' -f $cctkExe.FullName)) | Out-String
+            if ($qOut -match '(?i)embsataraid\s*=\s*(\S+)') { $cur = $Matches[1] }
+        } catch { }
+        if (-not $cur) {
+            Write-HephDim 'Storage-Modus nicht abfragbar (Option auf diesem Modell nicht vorhanden?) - Preflight übersprungen.'
+            if ($qOut) { Write-HephDim ('  cctk-Ausgabe: {0}' -f (($qOut -split "`r?`n" | Where-Object { $_ } | Select-Object -First 2) -join ' | ')) }
+        } elseif ($cur -ieq $storageTarget) {
+            Write-HephDim ('Storage-Modus bereits {0} - kein Preflight nötig.' -f $cur)
+        } else {
+            Write-HephWarn ('Storage-Modus ist "{0}", Ziel ist "{1}" (deploy.json Bios.StorageMode).' -f $cur, $storageTarget)
+            $secondRun = Test-Step -StateDir $StateDir -Name 'storage_mode.attempted'
+            if ($secondRun -or (-not $usbRoot)) {
+                if ($secondRun) {
+                    Write-HephErr 'Der Modus wurde bereits einmal umgestellt, steht aber immer noch falsch'
+                    Write-HephErr '(BIOS-Passwort gesetzt? Einstellung im BIOS gesperrt?).'
+                } else {
+                    # Ohne Stick überlebt das Schutz-Flag den Neustart nicht - der
+                    # automatische Zyklus könnte endlos loopen. Nur interaktiv weiter.
+                    Write-HephWarn 'Kein Stick gefunden - automatische Umstellung wird nicht riskiert (Schutz-Flag würde den Neustart nicht überleben).'
+                }
+                if (Confirm-Choice ('Trotzdem unter "{0}" installieren? Der OOBE-BIOS-Schritt wendet das CCTK-Paket dann nur nach Rückfrage an.' -f $cur)) {
+                    # Merker für die OOBE-Phase: Storage-Modus NICHT mehr anfassen -
+                    # ein Wechsel NACH der Installation macht Windows unbootbar.
+                    try { Set-Step -StateDir $StateDir -Name 'storage_mode.keep' -Detail ('installiert unter {0}, Ziel war {1}' -f $cur, $storageTarget) } catch { }
+                } else {
+                    Invoke-HephReboot -ExitCode 1
+                }
+            } else {
+                Write-HephInfo 'Ablauf: Disk leeren -> Modus umstellen -> automatischer Neustart vom Stick.'
+                Set-Step -StateDir $StateDir -Name 'storage_mode.attempted' -Detail ('{0} -> {1}' -f $cur, $storageTarget)
+                # NUR interne Bus-Typen (Thunderbolt/SD/USB bleiben außen vor) und
+                # ALLE internen Disks leeren - sonst könnte eine zweite Disk mit
+                # bootfähigem Rest-OS den automatischen Stick-Boot verhindern.
+                $cands = @()
+                try {
+                    $cands = @(Get-Disk | Where-Object { ($_.BusType -in @('NVMe','SATA','SAS','RAID','ATA')) -and ($_.Size -gt 60GB) })
+                } catch { }
+                if ($cands.Count -ge 1) {
+                    foreach ($d in $cands) {
+                        try {
+                            Write-HephInfo ('Leere Disk {0} ({1:N0} GB, {2}) ...' -f $d.Number, ($d.Size / 1GB), $d.BusType)
+                            Clear-Disk -Number $d.Number -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop
+                        } catch {
+                            Write-HephWarn ('Disk {0} leeren fehlgeschlagen ({1}) - nach dem Neustart ggf. F12 -> USB-Stick wählen.' -f $d.Number, $_.Exception.Message)
+                        }
+                    }
+                } else {
+                    Write-HephWarn 'Keine interne Disk eindeutig erkennbar - nach dem Neustart ggf. F12 -> USB-Stick wählen.'
+                }
+                cmd /c exit 0   # $LASTEXITCODE definiert zurücksetzen (Idiom wie im Hash-Schritt)
+                $setFailed = $false
+                $setOut    = ''
+                try { $setOut = (cmd /c ('"{0}" --embsataraid={1} 2>&1' -f $cctkExe.FullName, $storageTarget.ToLower())) | Out-String } catch { $setFailed = $true; $setOut = $_.Exception.Message }
+                if ((-not $setFailed) -and ($LASTEXITCODE -eq 0)) {
+                    Write-HephOk ('Storage-Modus auf {0} gesetzt - Neustart, danach läuft die Installation normal weiter.' -f $storageTarget)
+                    Invoke-HephReboot -CountdownSeconds 5
+                } else {
+                    Write-HephErr ('Umstellen fehlgeschlagen: {0}' -f $setOut.Trim())
+                    Write-HephErr '(BIOS-Admin-Passwort bereits gesetzt? Dann den Modus manuell im BIOS umstellen.)'
+                    if (Confirm-Choice ('Trotzdem unter "{0}" installieren? Der OOBE-BIOS-Schritt wendet das CCTK-Paket dann nur nach Rückfrage an.' -f $cur)) {
+                        try { Set-Step -StateDir $StateDir -Name 'storage_mode.keep' -Detail ('installiert unter {0}, Umstellung fehlgeschlagen' -f $cur) } catch { }
+                    } else {
+                        Invoke-HephReboot -ExitCode 1
+                    }
+                }
+            }
+        }
+    }
 }
 
 # ============================================================ Windows-Installation
@@ -350,6 +477,8 @@ if ($stagingOk) {
         $tplInfo = Get-HephaistosScript -RelPath 'oobe/oobe.cmd' -RawBase $Script:HephRawBase -FallbackRoots $Script:HephFallbackRoots
         $tpl = Get-Content -Path $tplInfo.Path -Raw
         $tpl.Replace('{{RAWBASE}}', $Script:HephRawBase) | Set-Content -Path (Join-Path $stagedRoot 'oobe.cmd') -Encoding ASCII
+        # Kurzbefehl für die OOBE-Konsole (v1.1.0): "c:\o" statt langem Pfad.
+        try { $tpl.Replace('{{RAWBASE}}', $Script:HephRawBase) | Set-Content -Path 'C:\o.cmd' -Encoding ASCII } catch { }
         Write-HephOk ('oobe.cmd gestaged (Quelle: {0}).' -f $tplInfo.Source)
     } catch {
         $stagingOk = $false
@@ -420,7 +549,7 @@ if ($stagingOk) {
             Model             = $Model
             Technician        = $tech
             OSLanguage        = $lang
-            GroupTagPreselect = $null
+            GroupTagPreselect = $groupTagPre
             WipeStartedUtc    = $wipeStartedUtc.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
             StagedUtc         = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
             Version           = $Script:HephVersion
@@ -441,7 +570,7 @@ Write-Host ''
 Write-HephOk 'HEPHAISTOS WinPE-Phase abgeschlossen.'
 Write-Host ''
 Write-HephInfo 'Nach dem Neustart: OOBE abwarten, dann Shift+F10 und starten:'
-Write-HephInfo '    C:\OSDCloud\HEPHAISTOS\oobe.cmd'
+Write-HephInfo '    C:\OSDCloud\HEPHAISTOS\oobe.cmd     (Kurzform: c:\o)'
 Write-HephDim  'Der USB-Stick bleibt eingesteckt (Logs, Status und Tools liegen dort).'
 Write-Host ''
 Invoke-HephReboot -CountdownSeconds 10

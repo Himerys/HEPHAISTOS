@@ -12,7 +12,7 @@
     ohne eingebettete Quotes aufgebaut und Elemente mit Whitespace komplett
     in Anführungszeichen gewrappt (Format-ProcessArg).
 .NOTES
-    HEPHAISTOS v1.0.4 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
+    HEPHAISTOS v1.1.0 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
     Benötigt PowerShell 5.1. Datei ist UTF-8 MIT BOM gespeichert (Pflicht für PS 5.1 + Umlaute).
 #>
 

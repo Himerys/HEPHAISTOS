@@ -374,6 +374,10 @@ läuft sofort wieder auf dem letzten bekannten guten Stand.
 | `Languages` | `1→de-de, 2→fr-fr, 3→pl-pl` | Auswahlmenü der Boot-Phase |
 | `DefaultLanguageKey` | `1` | Default (Enter genügt) |
 | `MinBuild` | `26200` | Mindest-Build für die Abnahme (eine Quelle für Build-Check) |
+| `Bios.StorageMode` | `Ahci` | Ziel-Storage-Modus; wird VOR der Installation in WinPE geprüft/gesetzt (RAID→AHCI nach der Installation würde den Boot brechen). `Keep` = Preflight aus |
+| `Bios.DefaultPackage` | `CCTK` | Standard-CCTK-Paketordner unter `_HEPHAISTOS\Tools\` |
+| `Bios.Packages` | `"Pro 13 Plus": "CCTK-Pro13Plus", …` | Modell-Teilstring → Paketordner; automatische Erkennung am WMI-Modellnamen, längster Treffer gewinnt, fehlender Ordner fällt auf das Standard-Paket zurück |
+| `Languages.<n>.GroupTag` | `SLGDE` | GroupTag-Vorschlag je Sprache (WinPE-Vorauswahl, OOBE bestätigt mit Enter) |
 | `RemoveWinRE` | `false` | OOBE-Schritt WinRE entfernen (Konsequenzen beachten!) |
 | `GroupTags` | `SLGDE, SLGFR, SLGPL, SLGTEST` | Autopilot-GroupTag-Auswahl |
 | `Report.TeamsAttachPdf` | `true` | PDF Base64 an die Teams-Karte anhängen |

@@ -1,5 +1,85 @@
 # CHANGELOG
 
+## 1.1.0 (2026-08-14) — Multi-Modell, Storage-Preflight, Bedienkomfort
+
+### Neu
+
+- **Storage-Modus-Preflight in WinPE (kritischer Fix):** Werks-BIOS = RAID/VMD,
+  Ziel = AHCI. Der Wechsel darf NICHT nach der Windows-Installation passieren
+  (Boot-Treiber-Stack passt dann nicht mehr → INACCESSIBLE_BOOT_DEVICE — der
+  bisherige OOBE-BIOS-Schritt hätte genau das ausgelöst). Neu: VOR
+  `Start-OSDCloud` wird der Modus per cctk geprüft; bei Abweichung: Disk leeren
+  → Modus setzen → Neustart (leere Disk bootet automatisch wieder vom Stick,
+  kein F12) → zweiter Durchlauf installiert direkt im Zielmodus.
+  Loop-Schutz über State-Flag `storage_mode.attempted`; konfigurierbar über
+  `deploy.json Bios.StorageMode` (Default `Ahci`, `Keep` = aus); nicht
+  abfragbare Option/fehlendes cctk = Preflight wird sauber übersprungen.
+- **Multi-Modell-Unterstützung (5 Modelle):** `Bios.Packages` in `deploy.json`
+  mappt Modell-Teilstrings auf CCTK-Paket-Ordner unter `_HEPHAISTOS\Tools\`
+  (z. B. `"Pro 13 Plus" → CCTK-Pro13Plus`). Auflösung automatisch am
+  WMI-Modellnamen, längster Treffer gewinnt („Pro 14 Premium" schlägt
+  „Pro 14"); fehlender Modell-Ordner fällt auf `DefaultPackage` (CCTK) zurück —
+  vollständig rückwärtskompatibel. Neue Lib-Funktion `Get-HephBiosPackageDir`
+  (pure, trockengetestet). Treiber brauchen keine Konfiguration: OSDCloud zieht
+  den Dell-Treiberpack passend zum Modell automatisch.
+- **GroupTag-Vorauswahl in WinPE:** Der Tag wird schon im Boot-Dialog bestätigt
+  (Vorschlag aus der gewählten Sprache via `Languages[n].GroupTag`), wandert
+  über `install.json` in die OOBE-Phase und ist dort nur noch mit Enter zu
+  bestätigen (Umwahl per Nummer weiter möglich).
+- **Tastatur-Layout-Fix in der OOBE:** Die Konsole wird automatisch auf das
+  Layout der Installationssprache gestellt (`Set-WinUserLanguageList`, best
+  effort) — die US-Layout-Falle (Y/Z vertauscht) bei der Passphrase ist
+  entschärft.
+- **Kurzbefehl `c:\o`:** Das Boot-Script staged zusätzlich `C:\o.cmd` —
+  in der OOBE-Konsole reicht `c:\o` statt des langen Pfads.
+- Build-USB-Checkliste listet die konfigurierten Modell-Paket-Ordner auf;
+  ANLEITUNG entsprechend erweitert (Multi-Modell, Preflight, Kurzbefehl).
+
+### Review-Härtung (adversarial Review vor Release)
+
+- Preflight-Abfrage nutzt korrekt `--embsataraid` (ohne `--` hätte cctk die
+  Abfrage als Subkommando missverstanden und der Preflight wäre stillschweigend
+  wirkungslos geblieben); bei nicht matchender Ausgabe wird die cctk-Antwort
+  als Diagnose mitgeloggt.
+- **Brick-Schutz durchgezogen:** Entscheidet der Techniker, unter dem
+  „falschen" Modus zu installieren, wird das Flag `storage_mode.keep` gesetzt —
+  der OOBE-BIOS-Schritt wendet das CCTK-Paket dann nur nach harter roter
+  Rückfrage an (EmbSataRaid im Paket würde das frische Windows unbootbar machen).
+- Erfolgskriterium der Umstellung ist jetzt ausschließlich der Exit-Code
+  (kein Text-Match mehr, der auf „UNSUCCESSFUL" hereinfallen konnte), mit
+  definiertem `$LASTEXITCODE`-Reset davor.
+- Ohne Stick kein automatischer Umstell-Zyklus (das Schutz-Flag würde den
+  Neustart nicht überleben → Endlos-Loop-Gefahr) — stattdessen interaktive
+  Entscheidung.
+- Disk-Auswahl auf interne Bus-Typen begrenzt (NVMe/SATA/SAS/RAID/ATA —
+  Thunderbolt-/SD-/USB-Medien sind sicher) und es werden ALLE internen Disks
+  geleert (zweite Disk mit Rest-OS hätte sonst den Stick-Autoboot verhindert).
+- cctk.exe-Suche bevorzugt das x64-Binary (WinPE x64 hat kein WOW64).
+- Versions-Skew-Schutz: läuft eine veraltete Lib-Kopie ohne
+  `Get-HephBiosPackageDir`, wird der Preflight sauber übersprungen bzw. das
+  Standard-Paket verwendet statt hart zu crashen.
+
+## 1.0.5 (2026-08-13) — Feedback aus der Testphase (2)
+
+### Behoben
+
+- **Assignment-Polling erkannte die Profilzuweisung nie:**
+  `deploymentProfileAssignmentStatus` existiert NUR im Graph-**beta**-Endpunkt —
+  v1.0 liefert die Property gar nicht, der Status blieb leer und das Polling
+  lief trotz erfolgter Zuweisung immer in den 30-Minuten-Timeout. Polling und
+  Registrierungs-Vorabprüfung nutzen jetzt `/beta/` (die App-Berechtigung deckt
+  das ab); die Vorabprüfung zeigt zusätzlich den aktuellen Zuweisungs-Status,
+  und ein leerer Status wird einmalig als Diagnose-Hinweis gemeldet.
+- **Abnahme: `entra-prt` in lokaler Admin-Session jetzt SKIPPED.** Meldet sich
+  der lokale LAPS-Admin (`<HOST>\<LocalAdminAccount>`) an der Konsole an, hat
+  das lokale Konto konstruktionsbedingt keinen Entra-PRT — der Test war in
+  dieser Konstellation immer falsch-rot bzw. landete im generischen INFO-Zweig.
+  Jetzt: SKIPPED mit klarem Hinweis („SSO als Mitarbeiter separat prüfen").
+  Die Entscheidung nutzt dieselbe geprüfte Funktion wie der Netskope-Sonderfall;
+  `LocalAdminAccount` wird zentral aufgelöst (eine Quelle für beide Checks).
+  Netskope-Verhalten unverändert: Admin-Session = nur Dienststatus, sonst
+  nsdiag-Steering-Prüfung.
+
 ## 1.0.4 (2026-08-12) — Feedback aus der Testphase
 
 ### Neu

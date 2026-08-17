@@ -12,14 +12,14 @@
           werden beim nächsten Entsperren automatisch neu verschlüsselt)
         - Graph-App-Token (client_credentials), Technikername, VC++-Runtime-Workaround
 .NOTES
-    HEPHAISTOS v1.0.4 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
+    HEPHAISTOS v1.1.0 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
     Benötigt PowerShell 5.1 (WinPE/OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM
     gespeichert (Pflicht für PS 5.1 + Umlaute).
 #>
 
 # ============================================================ Version (zentral)
 # Eine Quelle für Banner, Report-Header UND Report-Footer (behebt Rev04/Rev05-Drift).
-$HephaistosVersion = '1.0.4'
+$HephaistosVersion = '1.1.0'
 
 # Konsole auf UTF-8, damit Haken/Linien-Zeichen sauber dargestellt werden
 # (in WinPE/OOBE nicht immer möglich - best effort wie im Original).
@@ -385,6 +385,47 @@ function Get-TechnicianName {
 }
 
 # ============================================================ VC++-Runtime-Workaround
+function Get-HephBiosPackageDir {
+    # Modell-spezifisches CCTK-Paket auflösen (v1.1.0): deploy.json Bios.Packages
+    # mappt Modell-Teilstrings auf Ordnernamen unter <ToolsDir>. Der LÄNGSTE
+    # passende Schlüssel gewinnt ("Pro 14 Premium" schlägt "Pro 14"). Kein
+    # Treffer bzw. Ordner fehlt auf dem Stick -> DefaultPackage. Ohne Bios-Block
+    # in der Config verhält sich alles wie bisher (Tools\CCTK).
+    param(
+        [Parameter(Mandatory = $true)][string]$Model,
+        $BiosConfig,
+        [Parameter(Mandatory = $true)][string]$ToolsDir
+    )
+    $defaultPkg = 'CCTK'
+    if ($BiosConfig -and $BiosConfig.DefaultPackage) { $defaultPkg = [string]$BiosConfig.DefaultPackage }
+    $bestKey = $null
+    $bestPkg = $null
+    if ($BiosConfig -and $BiosConfig.Packages) {
+        foreach ($p in $BiosConfig.Packages.PSObject.Properties) {
+            $k = [string]$p.Name
+            if ($k -and ($Model -match [regex]::Escape($k))) {
+                if (-not $bestKey -or ($k.Length -gt $bestKey.Length)) {
+                    $bestKey = $k
+                    $bestPkg = [string]$p.Value
+                }
+            }
+        }
+    }
+    $pkg = $bestPkg
+    $why = ''
+    if ($pkg) { $why = ('Modell-Treffer "{0}"' -f $bestKey) }
+    else      { $pkg = $defaultPkg; $why = 'Standard-Paket (kein Modell-Treffer)' }
+    $dir = Join-Path $ToolsDir $pkg
+    $mappedMissing = $false
+    if (-not (Test-Path $dir) -and ($pkg -ne $defaultPkg)) {
+        $mappedMissing = $true
+        $why = ('Ordner "{0}" fehlt auf dem Stick - Standard-Paket als Ersatz' -f $pkg)
+        $pkg = $defaultPkg
+        $dir = Join-Path $ToolsDir $pkg
+    }
+    @{ Dir = $dir; Package = $pkg; Reason = $why; MappedMissing = $mappedMissing }
+}
+
 function Install-VcRuntimeIfMissing {
     # miniunz.exe (SCE-Selbstextraktion) braucht die VC++-Runtime; auf dem
     # Dell-Werksimage fehlt sie (Praxistest 07/2026: 0xC0000135).
@@ -411,7 +452,7 @@ Block WORTGLEICH am Anfang - nur die FallbackRoots-Zeile wird je Phase angepasst
 (Reihenfolge: Staged (C:) vor Stick, siehe SPEC §7.x der jeweiligen Datei).
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.0.4'
+$Script:HephVersion = '1.1.0'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots je Phase; Beispiel OOBE: Staged (C:) zuerst, dann Stick.
 $Script:HephFallbackRoots = @('C:\OSDCloud\HEPHAISTOS\Fallback')

@@ -1,6 +1,6 @@
 # HEPHAISTOS — Techniker-Anleitung
 
-**SLG Notebook-Onboarding (HEPHAISTOS) v1.0.0** — portiert und korrigiert aus dem
+**SLG Notebook-Onboarding (HEPHAISTOS) v1.1.0** — portiert und korrigiert aus dem
 USB_ScriptTool (Rev03–Rev05). Diese Anleitung beschreibt den **neuen** Ablauf:
 kompletter Disk-Wipe via OSDCloud, Neuaufbau nach Vorlage, alle Scripts kommen zur
 Laufzeit aus dem GitHub-Repo. Der USB-Stick ist statisch und wartungsfrei.
@@ -153,6 +153,23 @@ kopieren:
 Vorentpacktes Paket erzeugen (am Admin-PC): `Pro16Plus_CCTK_x64.exe /s /e=C:\Temp\CCTK`,
 danach den Inhalt von `C:\Temp\CCTK` nach `E:\_HEPHAISTOS\Tools\CCTK\` kopieren.
 
+**Mehrere Modelle (ab v1.1.0):** `config/deploy.json` → `Bios.Packages` mappt
+Modell-Teilstrings auf eigene Paket-Ordner, z. B. `"Pro 13 Plus": "CCTK-Pro13Plus"`
+→ `E:\_HEPHAISTOS\Tools\CCTK-Pro13Plus\applyconfig.bat`. Das passende Paket wird
+zur Laufzeit **automatisch am Modellnamen erkannt** (längster Treffer gewinnt);
+fehlt der Modell-Ordner auf dem Stick, greift automatisch das Standard-Paket
+(`Bios.DefaultPackage`, Default `CCTK`). Pro Modell also einfach das SCE am
+Referenzgerät exportieren, entpacken und in den jeweiligen Ordner legen —
+Build-USB listet die konfigurierten Ordner in der Abschluss-Checkliste.
+
+**Storage-Modus (ab v1.1.0):** `Bios.StorageMode` (Default `Ahci`) wird schon in
+der **WinPE-Phase vor der Installation** geprüft und bei Bedarf umgestellt —
+ein Wechsel RAID→AHCI *nach* der Installation würde Windows nicht mehr booten
+lassen. Steht das Werksgerät auf RAID, leert HEPHAISTOS die Disk, stellt um und
+startet neu (die leere Disk bootet automatisch wieder vom Stick); der zweite
+Durchlauf installiert dann direkt unter AHCI. `"StorageMode": "Keep"` schaltet
+den Preflight ab.
+
 ### 2.6 Erstverifikation
 
 Vor dem Flotteneinsatz **ein** Gerät mit GroupTag `SLGTEST` komplett durchlaufen
@@ -174,11 +191,20 @@ Der Stick bleibt während **aller** Phasen eingesteckt (Logs, State, CCTK, Secre
    gespeichert und bei der Abnahme als Vorschlag angeboten.
 4. **Sprache** wählen: `1` = Deutsch (Default, Enter genügt), `2` = Français,
    `3` = Polski.
-5. **ROTER Warnblock:** Es folgt ein kompletter Disk-Wipe. Modell und Service Tag
+5. **Group Tag** bestätigen (ab v1.1.0): Der zur Sprache passende Tag ist
+   vorausgewählt — Enter übernimmt ihn; in der OOBE-Phase genügt später ebenfalls
+   Enter.
+6. **ROTER Warnblock:** Es folgt ein kompletter Disk-Wipe. Modell und Service Tag
    werden angezeigt. Zum Bestätigen `LOESCHEN` eintippen — jede andere Eingabe
    bricht ab; auf Nachfrage kann direkt neu gestartet werden, sonst verbleibt
    das Gerät in der WinPE-Konsole.
-6. Danach läuft alles automatisch: `Start-OSDCloud -ZTI` löscht die interne Disk und
+7. **Storage-Modus-Preflight** (ab v1.1.0, nur beim ersten Durchlauf): Steht das
+   Werks-BIOS auf RAID, leert das Script die Disk, stellt auf AHCI um und startet
+   neu — das Gerät bootet **automatisch wieder vom Stick** (leere Disk), Name/
+   Sprache, Tag und die `LOESCHEN`-Bestätigung kurz erneut eingeben, dann geht es
+   direkt weiter. Kein Fehler,
+   erwartetes Verhalten.
+8. Danach läuft alles automatisch: `Start-OSDCloud -ZTI` löscht die interne Disk und
    installiert **Windows 11 25H2** in der gewählten Sprache (ESD-Download, je nach
    Netz ca. 20–40 Minuten). Anschließend staged das Script `C:\OSDCloud\HEPHAISTOS\`
    (oobe.cmd, Repo-Spiegel, Gerätedaten) und startet nach einem 10-Sekunden-Countdown
@@ -206,6 +232,16 @@ Nach dem Neustart bootet das frisch installierte Windows in die OOBE
    ```bat
    C:\OSDCloud\HEPHAISTOS\oobe.cmd
    ```
+
+   **oder** am kürzesten (ab v1.1.0):
+
+   ```bat
+   c:\o
+   ```
+
+   Die Konsole stellt sich automatisch auf das Tastatur-Layout der gewählten
+   Installationssprache um (ab v1.1.0) — die Y/Z-Falle bei der Passphrase ist
+   damit entschärft.
 
 > **ACHTUNG — bekannter Fehler der alten Anleitung:** `cd` und Dateiaufruf **niemals
 > mischen**. `cd C:\OSDCloud\HEPHAISTOS\oobe.cmd` ist **kein** gültiger Befehl
@@ -336,7 +372,9 @@ auf GitHub wirken sofort auf alle Sticks. Offline greift der Stick-Spiegel
 | Feld | Bedeutung |
 |---|---|
 | `OS.OSName` / `OSEdition` / `OSActivation` | Zielimage für OSDCloud: `Windows 11 25H2 x64`, `Pro`, `Retail`. Der exakte OSName-String muss vom installierten OSD-Modul gelistet sein (Warnung in WinPE bzw. Build-USB bei Abweichung). |
-| `Languages` / `DefaultLanguageKey` | Sprachmenü der WinPE-Phase (1=DE Default, 2=FR, 3=PL) |
+| `Languages` / `DefaultLanguageKey` | Sprachmenü der WinPE-Phase (1=DE Default, 2=FR, 3=PL); je Sprache optional `GroupTag` als Vorauswahl (ab v1.1.0) |
+| `Bios.StorageMode` | Ziel-Storage-Modus, Default `Ahci` — wird VOR der Installation in WinPE geprüft/gesetzt; `Keep` = Preflight aus (ab v1.1.0, siehe [2.5](#25-cctk-und-vc-runtime-auf-den-stick-kopieren-manuell)) |
+| `Bios.DefaultPackage` / `Bios.Packages` | Standard- bzw. modell-spezifische CCTK-Paketordner unter `_HEPHAISTOS\Tools\` (ab v1.1.0, siehe [2.5](#25-cctk-und-vc-runtime-auf-den-stick-kopieren-manuell)) |
 | `MinBuild` | Mindest-Build für die Abnahme, Default **26200** (= 25H2). Eine Quelle für WinPE und Abnahme. |
 | `RemoveWinRE` | Default `false` — siehe [5.3](#53-removewinre-flag-mit-konsequenzen) |
 | `GroupTags` | Auswahlreihenfolge im Hash-Schritt (`SLGDE`, `SLGFR`, `SLGPL`, `SLGTEST`) |

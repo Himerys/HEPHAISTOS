@@ -18,7 +18,7 @@
 .PARAMETER NoReport
     Nur Konsolen-/Text-/JSON-Ausgabe - HTML/PDF/Teams/Mail entfallen.
 .NOTES
-    HEPHAISTOS v1.0.4 - portiert aus USB_ScriptTool Rev05
+    HEPHAISTOS v1.1.0 - portiert aus USB_ScriptTool Rev05
     (Test-SLGDeviceOnboarding.ps1 Rev04 + Invoke-Step4Compliance aus
     SLG-Onboarding.ps1). PowerShell 5.1. UTF-8 mit BOM.
     Dreistufiges Ergebnis - unkritische Checks (Windows Update, Pending
@@ -47,7 +47,7 @@ param(
 )
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.0.4'
+$Script:HephVersion = '1.1.0'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots fuer die Abnahme: Stick-Fallback zuerst, dann gestagte Kopie auf C:.
 # Minimal-Suche nach dem Stick VOR dem Lib-Load (Find-HephaistosUsb liegt erst in der Lib).
@@ -318,8 +318,18 @@ $consoleUser = $null
 try { $consoleUser = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName } catch { }
 $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $prtYes = ($dsreg -and (@($dsreg -match '^\s*AzureAdPrt\s*:\s*YES').Count -gt 0))
+# LocalAdminAccount einmal zentral auflösen - genutzt von entra-prt UND netskope-tunnel.
+$script:LocalAdminName = 'intuneadm'   # Default, wenn report-checks.json fehlt
+if ($script:ChecksCfg -and $script:ChecksCfg.LocalAdminAccount) { $script:LocalAdminName = $script:ChecksCfg.LocalAdminAccount }
+$script:IsLocalAdminSession = Test-HephLocalAdminSession -ConsoleUser $consoleUser -ComputerName $env:COMPUTERNAME -LocalAdminAccount $script:LocalAdminName
 if (-not (Test-HephCheckEnabled -Id 'entra-prt')) {
     Add-Result -Name 'Entra SSO: Primary Refresh Token (AzureAdPrt)' -Status 'SKIPPED' -Detail 'per Config deaktiviert'
+} elseif ($script:IsLocalAdminSession) {
+    # Lokale Admin-Session (<HOST>\<LocalAdminAccount>): Das lokale Konto hat
+    # konstruktionsbedingt KEINEN Entra-PRT - der Test wäre hier immer falsch-rot.
+    # Bewusst SKIPPED (sichtbar), SSO wird als Mitarbeiter separat geprüft.
+    Add-Result -Name 'Entra SSO: Primary Refresh Token (AzureAdPrt)' -Status 'SKIPPED' -Detail (
+        'Lokale Admin-Session ({0}) - lokales Konto hat keinen Entra-PRT; SSO als Mitarbeiter separat pruefen (dsregcmd /status).' -f $script:LocalAdminName)
 } elseif ($consoleUser -and ($consoleUser -ieq $currentUser)) {
     Invoke-Check -Id 'entra-prt' -Name 'Entra SSO: Primary Refresh Token (AzureAdPrt)' -Test {
         @{ Ok = $prtYes; Detail = if ($prtYes) { '' } else { 'AzureAdPrt != YES - SSO/Conditional Access werden fehlschlagen. Geraet sperren/entsperren und erneut pruefen.' } }
@@ -423,9 +433,8 @@ Invoke-Check -Id 'netskope-tunnel' -Name 'Netskope: Tunnel verbunden (nsdiag)' -
     # NSTUNNEL_DISCONNECTED. In dem Fall wird NUR der Dienststatus geprueft
     # (Running + StartType=Automatic, wie im Dienste-Check).
     # Konsolen-Benutzer: gleiche Quelle wie im PRT-Check ($consoleUser oben).
-    $localAdmin = 'intuneadm'   # Default, wenn report-checks.json fehlt
-    if ($script:ChecksCfg -and $script:ChecksCfg.LocalAdminAccount) { $localAdmin = $script:ChecksCfg.LocalAdminAccount }
-    if (Test-HephLocalAdminSession -ConsoleUser $consoleUser -ComputerName $env:COMPUTERNAME -LocalAdminAccount $localAdmin) {
+    $localAdmin = $script:LocalAdminName   # zentral vor dem PRT-Check aufgelöst
+    if ($script:IsLocalAdminSession) {
         $svc = Get-Service -Name 'stAgentSvc' -ErrorAction SilentlyContinue
         if (-not $svc)                  { return @{ Ok = $false; Detail = 'Dienst stAgentSvc nicht vorhanden (App nicht installiert?)' } }
         if ($svc.Status -ne 'Running')  { return @{ Ok = $false; Detail = "Dienst stAgentSvc Status: $($svc.Status)" } }

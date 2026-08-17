@@ -15,7 +15,7 @@
     Die CCTK-Binärdateien liegen bewusst NUR auf dem Stick (zu groß/lizenzpflichtig
     fürs Repo) - ohne Stick kann dieser Schritt nicht laufen.
 .NOTES
-    HEPHAISTOS v1.0.4 - portiert aus USB_ScriptTool Rev05. PowerShell 5.1. UTF-8 mit BOM.
+    HEPHAISTOS v1.1.0 - portiert aus USB_ScriptTool Rev05. PowerShell 5.1. UTF-8 mit BOM.
 #>
 param([hashtable]$Context)
 
@@ -42,8 +42,37 @@ if (-not $Context.UsbRoot) {
     return
 }
 $tools   = Join-Path $Context.UsbRoot '_HEPHAISTOS\Tools'
-$cctkBat = Join-Path $tools 'CCTK\applyconfig.bat'
+# v1.1.0: Modell-spezifisches CCTK-Paket (deploy.json Bios.Packages, längster
+# Modell-Teilstring gewinnt), Fallback = Standard-Paket (bisheriges Tools\CCTK).
+$pkgInfo = $null
+if (Get-Command Get-HephBiosPackageDir -ErrorAction SilentlyContinue) {
+    $pkgInfo = Get-HephBiosPackageDir -Model ([string]$Context.Model) -BiosConfig $(if ($Context.Config) { $Context.Config.Bios } else { $null }) -ToolsDir $tools
+} else {
+    # Veraltete Lib-Kopie (Offline-Fallback) ohne die 1.1.0-Funktion: Standard-Paket.
+    $pkgInfo = @{ Dir = (Join-Path $tools 'CCTK'); Package = 'CCTK'; Reason = 'Standard-Paket (Lib ohne Modell-Mapping)'; MappedMissing = $false }
+}
+if ($pkgInfo.MappedMissing) {
+    Write-HephWarn ('Für dieses Modell ist ein eigenes CCTK-Paket konfiguriert, der Ordner fehlt aber auf dem Stick - Standard-Paket wird verwendet.')
+}
+Write-HephDim ('CCTK-Paket: {0} ({1})' -f $pkgInfo.Package, $pkgInfo.Reason)
+$cctkBat = Join-Path $pkgInfo.Dir 'applyconfig.bat'
 $sce     = Join-Path $tools 'Pro16Plus_CCTK_x64.exe'
+
+# --- Storage-Schutz (v1.1.0): Wurde in WinPE entschieden, unter dem "falschen"
+# Storage-Modus zu installieren (Flag storage_mode.keep), darf das CCTK-Paket
+# den Modus jetzt NICHT mehr umstellen - ein Wechsel NACH der Installation macht
+# Windows unbootbar (INACCESSIBLE_BOOT_DEVICE). applyconfig.bat wendet die
+# komplette INI an, deshalb hier die harte Rückfrage.
+if ($Context.StateDir -and (Test-Step -StateDir $Context.StateDir -Name 'storage_mode.keep')) {
+    Write-HephErr 'ACHTUNG: Windows wurde bewusst unter dem aktuellen Storage-Modus installiert.'
+    Write-HephErr 'Enthält das CCTK-Paket eine Storage-Option (EmbSataRaid), macht dessen'
+    Write-HephErr 'Anwendung das Gerät beim nächsten Neustart UNBOOTBAR.'
+    if (-not (Confirm-Choice 'CCTK-Paket trotzdem anwenden? (Nur wenn es KEINE Storage-Option enthält!)')) {
+        Write-HephWarn 'BIOS-Konfiguration übersprungen - manuell nachholen (Paket ohne Storage-Option verwenden).'
+        Write-HephResult -Success $false -Text 'BIOS-Konfiguration NICHT angewendet (Storage-Schutz).'
+        return
+    }
+}
 
 # --- CCTK-Kette (Port 1:1): vorentpacktes CCTK bevorzugt, sonst SCE-EXE ---
 $log = $null

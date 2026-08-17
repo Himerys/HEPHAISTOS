@@ -16,7 +16,7 @@
     Nur Stick-Inhalte aktualisieren (ohne WinPE/USB neu zu bauen):
         ... -SkipUsbCreation
 .NOTES
-    HEPHAISTOS v1.0.4 - portiert/erweitert aus USB_ScriptTool Rev05 (Handoff §8).
+    HEPHAISTOS v1.1.0 - portiert/erweitert aus USB_ScriptTool Rev05 (Handoff §8).
     PowerShell 5.1. UTF-8 mit BOM.
 #>
 #Requires -RunAsAdministrator
@@ -28,7 +28,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Script:HephVersion = '1.0.4'
+$Script:HephVersion = '1.1.0'
 
 # --- Repo-Checkout + zentrale Config (RawBase kommt NUR aus deploy.json) ----
 $RepoRoot   = Split-Path -Parent $PSScriptRoot
@@ -216,5 +216,12 @@ Write-Host ('  [ ] CCTK-Paket kopieren nach {0}_HEPHAISTOS\Tools\' -f $usbRoot) 
 Write-Host '      -> vorentpacktes CCTK nach Tools\CCTK\ (applyconfig.bat) UND/ODER' -ForegroundColor DarkGray
 Write-Host '         Pro16Plus_CCTK_x64.exe + vc_redist.x64.exe' -ForegroundColor DarkGray
 Write-Host '         (zu gross/lizenzpflichtig fuers Repo)' -ForegroundColor DarkGray
+if ($Deploy.Bios -and $Deploy.Bios.Packages) {
+    Write-Host '      Modell-spezifische CCTK-Pakete (deploy.json Bios.Packages):' -ForegroundColor DarkGray
+    foreach ($p in $Deploy.Bios.Packages.PSObject.Properties) {
+        Write-Host ('        {0} ->  _HEPHAISTOS\Tools\{1}\' -f ([string]$p.Name).PadRight(16), $p.Value) -ForegroundColor DarkGray
+    }
+    Write-Host '        (fehlender Modell-Ordner faellt automatisch auf das Standard-Paket zurueck)' -ForegroundColor DarkGray
+}
 Write-Host '  [ ] Repo public schalten - die StartURL muss unauthentifiziert abrufbar sein' -ForegroundColor Cyan
 Write-Host $bar -ForegroundColor DarkCyan

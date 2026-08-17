@@ -14,7 +14,7 @@
            (bei zugewiesenem Profil: automatischer Neustart in das Provisioning)
     Status pro Gerät: <Stick>:\Logs\<ServiceTag>\state\*.done
 .NOTES
-    HEPHAISTOS v1.0.4 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
+    HEPHAISTOS v1.1.0 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
     Benötigt PowerShell 5.1 (OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM gespeichert
     (Pflicht für PS 5.1 + Umlaute).
 #>
@@ -25,7 +25,7 @@ $Check = [char]0x2713   # Haken-Symbol, zur Laufzeit erzeugt (ASCII-sichere Quel
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.0.4'
+$Script:HephVersion = '1.1.0'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots dieser Phase (OOBE): zuerst die gestagte Kopie auf C:, dann der
 # Stick. Der Stick wird hier per Minimal-Suche gefunden (DriveInfo-Schleife nach
@@ -143,6 +143,21 @@ if (Test-Path $installJson) {
         Write-HephDim ("install.json vorhanden, aber nicht lesbar: {0}" -f $_.Exception.Message)
     }
 }
+# Tastatur-Layout der OOBE-Konsole an die Installationssprache angleichen (v1.1.0):
+# Die OOBE-Konsole steht sonst auf US-Layout - Klassiker: Y/Z vertauscht, die
+# Passphrase wird unbemerkt falsch getippt. Best effort, Fehler nur als Hinweis.
+try {
+    $kbLang = 'de-DE'
+    if ($inst -and $inst.OSLanguage) {
+        $p = ([string]$inst.OSLanguage).Split('-')
+        if ($p.Count -eq 2) { $kbLang = ('{0}-{1}' -f $p[0].ToLower(), $p[1].ToUpper()) }
+    }
+    Set-WinUserLanguageList -LanguageList $kbLang -Force -ErrorAction Stop
+    Write-HephDim ("Tastatur-Layout auf {0} gesetzt (US-Layout-Falle bei der Passphrase entschärft)." -f $kbLang)
+} catch {
+    Write-HephWarn 'Tastatur-Layout konnte nicht gesetzt werden - Achtung: Konsole evtl. US-Layout (Y/Z vertauscht)!'
+}
+
 if ($techDefault) { $Technician = Get-TechnicianName -Default $techDefault }
 else              { $Technician = Get-TechnicianName }
 # Namen für die Abnahme-Phase festhalten (Geräteordner, best effort)
@@ -203,11 +218,12 @@ $SecretsPath = $null
 if ($UsbRoot) { $SecretsPath = Join-Path $UsbRoot 'HEPHAISTOS-Secrets\hephaistos.secrets.enc.json' }
 
 $ctx = @{
-    UsbRoot       = $UsbRoot
-    DevDir        = $DevDir
-    StateDir      = $StateDir
-    Serial        = $Serial
-    Model         = $Model
+    UsbRoot           = $UsbRoot
+    DevDir            = $DevDir
+    StateDir          = $StateDir
+    Serial            = $Serial
+    Model             = $Model
+    GroupTagPreselect = $(if ($inst -and $inst.GroupTagPreselect) { [string]$inst.GroupTagPreselect } else { $null })
     Config        = $cfg
     ConfigSource  = $cfgLoad.Source
     StagedRoot    = $StagedRoot

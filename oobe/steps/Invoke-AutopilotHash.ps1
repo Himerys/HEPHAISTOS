@@ -18,7 +18,7 @@
            Timeout: gelber Hinweis auf die GroupTag-Gruppenzuordnung, KEIN Neustart.
     Erwartet die geladene HEPHAISTOS-Bibliothek (lib\Hephaistos.Common.ps1) im Scope.
 .NOTES
-    HEPHAISTOS v1.0.4 - portiert aus USB_ScriptTool Rev05
+    HEPHAISTOS v1.1.0 - portiert aus USB_ScriptTool Rev05
     (SLG-Onboarding.ps1 / Invoke-Step3Hash + Scripts\Export-AutopilotHash.ps1 Rev02).
     Benötigt PowerShell 5.1 (OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM gespeichert
     (Pflicht für PS 5.1 + Umlaute).
@@ -113,18 +113,32 @@ if ($groupTags.Count -eq 0) {
     $groupTags = @('SLGDE','SLGFR','SLGPL','SLGTEST')
     Write-HephWarn 'Keine GroupTags in der Config gefunden - nutze Standardliste.'
 }
+# v1.1.0: Vorauswahl aus der WinPE-Phase (install.json GroupTagPreselect,
+# abgeleitet aus der Sprache) - Enter übernimmt sie, Nummer wählt um.
+$tagPre = $null
+if ($Context.ContainsKey('GroupTagPreselect') -and $Context.GroupTagPreselect) { $tagPre = [string]$Context.GroupTagPreselect }
+if ($tagPre -and ($groupTags -notcontains $tagPre)) { $tagPre = $null }   # nur gültige Tags als Default
 Write-Host ''
 for ($i = 0; $i -lt $groupTags.Count; $i++) {
-    Write-Host ("  [{0}] {1}" -f ($i + 1), $groupTags[$i])
+    $mark = ''
+    if ($tagPre -and ($groupTags[$i] -ieq $tagPre)) { $mark = '   <- Vorauswahl (WinPE)' }
+    Write-Host ("  [{0}] {1}{2}" -f ($i + 1), $groupTags[$i], $mark)
 }
-$sel = Read-Host 'Group Tag'
+$tagPrompt = 'Group Tag'
+if ($tagPre) { $tagPrompt = ('Group Tag [Enter = {0}]' -f $tagPre) }
+$sel = (Read-Host $tagPrompt).Trim()
+$tag = $null
 $idx = 0
-if (-not ([int]::TryParse($sel, [ref]$idx) -and $idx -ge 1 -and $idx -le $groupTags.Count)) {
+if (-not $sel -and $tagPre) {
+    $tag = $tagPre
+} elseif ([int]::TryParse($sel, [ref]$idx) -and $idx -ge 1 -and $idx -le $groupTags.Count) {
+    $tag = $groupTags[$idx - 1]
+}
+if (-not $tag) {
     Write-HephWarn 'Ungültige Auswahl - abgebrochen.'
     Write-HephResult -Success $false -Text 'Autopilot-Hash: kein Group Tag gewählt - Schritt bleibt offen.'
     return
 }
-$tag = $groupTags[$idx - 1]
 
 # --- Group Tag automatisch in die CSV eintragen ---
 try {
@@ -176,7 +190,9 @@ $alreadyRegistered = $false
 if ($secrets) {
     try {
         $chkToken = Get-GraphAppToken -Cfg $secrets
-        $chkUri   = "https://graph.microsoft.com/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?`$filter=contains(serialNumber,'{0}')" -f $serial
+        # beta-Endpunkt: liefert zusätzlich deploymentProfileAssignmentStatus
+        # (in v1.0 fehlt die Property komplett - siehe Polling unten).
+        $chkUri   = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?`$filter=contains(serialNumber,'{0}')" -f $serial
         $chkResp  = Invoke-RestMethod -Method GET -Uri $chkUri -Headers @{ Authorization = "Bearer $chkToken" }
         # Nur EXAKTER Serial-Treffer zählt (contains() ist unscharf - für das
         # Überspringen des Uploads reicht ein Teilstring-Treffer NICHT).
@@ -200,6 +216,8 @@ if ($secrets) {
                 Write-HephWarn 'sonst bleibt die Profilzuweisung aus (Polling wird vermutlich in den Timeout laufen).'
             }
             Set-Step -StateDir $stateDir -Name 'step3_hash.done' -Detail ("Bereits in Autopilot registriert, GroupTag={0}" -f $(if ($exTag) { $exTag } else { 'KEINES (nachtragen!)' }))
+            $exStatus = [string]$existing.deploymentProfileAssignmentStatus
+            if ($exStatus) { Write-HephDim ('  Zuweisungs-Status: {0}' -f $exStatus) }
         }
     } catch {
         Write-HephDim ('Registrierungs-Vorabprüfung nicht möglich ({0}) - Upload wird normal versucht.' -f $_.Exception.Message)
@@ -263,9 +281,14 @@ $maxPolls     = 60      # 60 x 30 s = 30 Minuten
 $intervalSec  = 30
 $assigned     = $false
 $lastStatus   = ''
+$emptyWarned  = $false
 $tokenRenewed = $false
 $pollStart    = Get-Date
-$pollUri      = "https://graph.microsoft.com/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?`$filter=contains(serialNumber,'{0}')" -f $serial
+# WICHTIG (Praxisfund 08/2026): deploymentProfileAssignmentStatus existiert NUR
+# im beta-Endpunkt - v1.0 liefert die Property gar nicht. Mit v1.0 blieb der
+# Status immer leer und das Polling lief trotz erfolgter Zuweisung in den
+# Timeout. Die App-Berechtigung deckt beta genauso ab.
+$pollUri      = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?`$filter=contains(serialNumber,'{0}')" -f $serial
 
 try {
     $token = Get-GraphAppToken -Cfg $secrets
@@ -316,6 +339,11 @@ for ($n = 1; $n -le $maxPolls; $n++) {
         if ($status -and $status -ne $lastStatus) {
             Write-HephDim ('  Status: {0}' -f $status)
             $lastStatus = $status
+        } elseif (-not $status -and -not $emptyWarned) {
+            # Diagnose-Hinweis (einmalig): sollte mit dem beta-Endpunkt nicht
+            # mehr auftreten - falls doch, ist das die Erklärung für einen Timeout.
+            Write-HephDim '  Hinweis: Graph liefert (noch) keinen Zuweisungs-Status für diesen Eintrag.'
+            $emptyWarned = $true
         }
         if ($status -like 'assigned*') { $assigned = $true; break }
     }
