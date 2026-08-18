@@ -1,5 +1,58 @@
 # CHANGELOG
 
+## 1.2.0 (2026-08-14) — Autostart OOBE + Auto-Abnahme
+
+### Neu
+
+- **OOBE-Autostart ohne Shift+F10** (`deploy.json Oobe.AutoLaunch`, Default an):
+  Das Boot-Script hängt beim Staging einen RunSynchronous-Eintrag an den
+  **Specialize-Pass** des Windows-Setups — per echtem XML-Merge in das von
+  OSDCloud gestagte Unattend (dessen Treiber-Injection bleibt unangetastet;
+  idempotent, kein Doppel-Eintrag). Beim ersten Boot öffnet sich die
+  HEPHAISTOS-Konsole automatisch während „Geräte werden vorbereitet".
+  Eleganter Nebeneffekt: Da die Profilzuweisung damit VOR dem OOBE-Start
+  bestätigt wird, **entfällt der Auto-Reboot komplett** — das Setup fährt
+  einfach fort und die OOBE startet direkt in das Autopilot-Provisioning.
+  Im Specialize-Modus wird das GroupTag automatisch aus der WinPE-Vorauswahl
+  übernommen (keine vermeidbare Eingabe im Setup-Vollbild); die
+  Passphrase-Eingabe bleibt interaktiv. Shift+F10 + `c:\o` bleibt als
+  dokumentierter Fallback erhalten (auch wenn der Hook fehlschlägt: gelbe
+  Meldung, Ablauf unverändert).
+- **Auto-Abnahme nach dem Provisioning** (`deploy.json Abnahme.AutoRun`,
+  Default an, `DelayMinutes` konfigurierbar): Die OOBE-Phase registriert die
+  geplante Aufgabe `HEPHAISTOS-AutoAbnahme` (SYSTEM, bei Anmeldung, verzögert).
+  Der neue Wächter `abnahme/Invoke-AutoAbnahme.ps1` prüft selbstständig:
+  regulärer Benutzer angemeldet (kein defaultuser0), Intune Management
+  Extension installiert, Stick eingesteckt — sonst wartet er still auf die
+  nächste Anmeldung. Dann läuft die Abnahme im neuen **nicht-interaktiven
+  Modus** (`-NonInteractive`): Techniker-Name aus der WinPE-Phase, Secrets/
+  Teams/Mail übersprungen (Mail wie gehabt später via SEND-REPORTS), Report
+  landet automatisch im Geräteordner auf dem Stick. Nach BESTANDENER Abnahme
+  entfernt die Aufgabe sich selbst; bei FAILED bleibt sie aktiv und versucht
+  es bei der nächsten Anmeldung erneut. Protokoll:
+  `C:\OSDCloud\HEPHAISTOS\autoabnahme.log`. Manuelles START-ABNAHME.cmd
+  bleibt unverändert möglich (z. B. für Teams-Karte mit Passphrase).
+- Abnahme: neuer Parameter `-NonInteractive` (keinerlei Eingaben; sauberes
+  Überspringen von Teams/Mail).
+
+### Review-Härtung (adversarial Review vor Release)
+
+- **Setup-Schutz:** Im Specialize-Modus beendet sich `oobe.cmd` IMMER mit
+  Exit-Code 0 — ein RunSynchronous-Befehl mit Exit ≠ 0 würde sonst das gesamte
+  Windows-Setup abreißen („installation failed in the SPECIALIZE phase").
+  Onboarding-Fehler stehen in Logs/Flags und sind manuell nachholbar.
+- **Kein unsichtbares Hängen:** `Get-HephaistosDeviceInfo` bekommt `-NoPrompt`;
+  der nicht-interaktive Abnahme-Lauf bricht bei unlesbarem Service Tag sauber
+  ab, statt als verstecktes SYSTEM-Fenster ewig auf Read-Host zu warten. Der
+  Auto-Abnahme-Wächter bekommt zusätzlich ein 90-Minuten-Timeout (hängender
+  Kindprozess wird beendet, nächste Anmeldung versucht es erneut) und einen
+  Exit-Code-Ersatzpfad für die Selbst-Entfernung.
+- Specialize-Modus übernimmt auch den **Technikernamen** automatisch aus der
+  WinPE-Phase (konsistent zum GroupTag — einzige Eingabe ist die Passphrase).
+- `oobe.cmd` reagiert nur noch auf das echte `/specialize`-Argument (nicht auf
+  eine zufällig geerbte Umgebungsvariable); ANLEITUNG 3.2/3.3 präzisiert
+  (Polling sichtbar in der Setup-Konsole; reboot-freier Standardweg).
+
 ## 1.1.0 (2026-08-14) — Multi-Modell, Storage-Preflight, Bedienkomfort
 
 ### Neu

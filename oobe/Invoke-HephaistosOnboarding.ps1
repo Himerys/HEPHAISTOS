@@ -14,7 +14,7 @@
            (bei zugewiesenem Profil: automatischer Neustart in das Provisioning)
     Status pro Gerät: <Stick>:\Logs\<ServiceTag>\state\*.done
 .NOTES
-    HEPHAISTOS v1.1.0 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
+    HEPHAISTOS v1.2.0 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
     Benötigt PowerShell 5.1 (OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM gespeichert
     (Pflicht für PS 5.1 + Umlaute).
 #>
@@ -25,7 +25,7 @@ $Check = [char]0x2713   # Haken-Symbol, zur Laufzeit erzeugt (ASCII-sichere Quel
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.1.0'
+$Script:HephVersion = '1.2.0'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots dieser Phase (OOBE): zuerst die gestagte Kopie auf C:, dann der
 # Stick. Der Stick wird hier per Minimal-Suche gefunden (DriveInfo-Schleife nach
@@ -81,8 +81,13 @@ $Model   = $devInfo.Model
 
 # OOBE-Erkennung: in der OOBE läuft die Shift+F10-Konsole als defaultuser0
 $IsOobe  = ($env:USERNAME -ieq 'defaultuser0')
+# Specialize-Autostart (v1.2.0): oobe.cmd /specialize setzt HEPH_SPECIALIZE=1 -
+# der Ablauf läuft dann aus dem Windows-Setup heraus (unattend RunSynchronous):
+# reboot-frei, GroupTag aus der WinPE-Vorauswahl ohne Rückfrage.
+$SpecializeMode = ($env:HEPH_SPECIALIZE -eq '1')
 $envText = 'Windows'
 if ($IsOobe) { $envText = 'OOBE' }
+if ($SpecializeMode) { $envText = 'Windows-Setup (Specialize)' }
 
 Write-HephBanner -Title 'HEPHAISTOS - OOBE Onboarding' -Version $Script:HephVersion -Source $Script:HephLibSource -Model $Model -Serial $Serial -Env $envText
 
@@ -158,8 +163,13 @@ try {
     Write-HephWarn 'Tastatur-Layout konnte nicht gesetzt werden - Achtung: Konsole evtl. US-Layout (Y/Z vertauscht)!'
 }
 
-if ($techDefault) { $Technician = Get-TechnicianName -Default $techDefault }
-else              { $Technician = Get-TechnicianName }
+# Specialize-Autostart: WinPE-Angabe automatisch übernehmen (gleiche Logik wie
+# beim GroupTag - keine vermeidbare blockierende Eingabe im Setup-Vollbild).
+if ($SpecializeMode -and $techDefault) {
+    $Technician = $techDefault
+    Write-HephDim ('Techniker automatisch übernommen (WinPE-Angabe): {0}' -f $Technician)
+} elseif ($techDefault) { $Technician = Get-TechnicianName -Default $techDefault }
+else                    { $Technician = Get-TechnicianName }
 # Namen für die Abnahme-Phase festhalten (Geräteordner, best effort)
 try { $Technician | Set-Content -Path (Join-Path $DevDir 'technician.txt') -Encoding UTF8 } catch { }
 
@@ -224,6 +234,7 @@ $ctx = @{
     Serial            = $Serial
     Model             = $Model
     GroupTagPreselect = $(if ($inst -and $inst.GroupTagPreselect) { [string]$inst.GroupTagPreselect } else { $null })
+    SpecializeMode    = $SpecializeMode
     Config        = $cfg
     ConfigSource  = $cfgLoad.Source
     StagedRoot    = $StagedRoot
@@ -231,6 +242,30 @@ $ctx = @{
     FallbackRoots = $Script:HephFallbackRoots
     Technician    = $Technician
     SecretsPath   = $SecretsPath
+}
+
+# ============================================================ Auto-Abnahme vormerken (v1.2.0)
+# Geplante Aufgabe (SYSTEM, bei Anmeldung, verzögert): startet die Abnahme nach
+# dem Provisioning automatisch im nicht-interaktiven Modus. Die Aufgabe prüft
+# ihre Bedingungen selbst (kein defaultuser0, IME installiert, Stick vorhanden)
+# und entfernt sich nach bestandener Abnahme selbst. deploy.json: Abnahme.AutoRun.
+if ($cfg.Abnahme -and $cfg.Abnahme.AutoRun -eq $true) {
+    try {
+        $delayMin = 5
+        if ($cfg.Abnahme.DelayMinutes) { $delayMin = [int]$cfg.Abnahme.DelayMinutes }
+        $aaScript = Join-Path $StagedRoot 'Fallback\abnahme\Invoke-AutoAbnahme.ps1'
+        if (-not (Test-Path $aaScript)) { throw ('Datei fehlt: {0}' -f $aaScript) }
+        $aaAction    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f $aaScript)
+        $aaTrigger   = New-ScheduledTaskTrigger -AtLogOn
+        $aaTrigger.Delay = ('PT{0}M' -f $delayMin)
+        $aaPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+        Register-ScheduledTask -TaskName 'HEPHAISTOS-AutoAbnahme' -Action $aaAction -Trigger $aaTrigger -Principal $aaPrincipal -Force | Out-Null
+        Write-HephOk ('Auto-Abnahme vorgemerkt: startet {0} min nach der ersten Anmeldung nach dem Provisioning (entfernt sich nach bestandener Abnahme selbst).' -f $delayMin)
+    } catch {
+        Write-HephWarn ('Auto-Abnahme konnte nicht vorgemerkt werden ({0}) - Abnahme manuell per START-ABNAHME.cmd.' -f $_.Exception.Message)
+    }
+} else {
+    Write-HephDim 'Auto-Abnahme deaktiviert (deploy.json Abnahme.AutoRun) - Abnahme manuell per START-ABNAHME.cmd.'
 }
 
 # ============================================================ Schritte ausführen

@@ -12,14 +12,14 @@
           werden beim nächsten Entsperren automatisch neu verschlüsselt)
         - Graph-App-Token (client_credentials), Technikername, VC++-Runtime-Workaround
 .NOTES
-    HEPHAISTOS v1.1.0 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
+    HEPHAISTOS v1.2.0 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
     Benötigt PowerShell 5.1 (WinPE/OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM
     gespeichert (Pflicht für PS 5.1 + Umlaute).
 #>
 
 # ============================================================ Version (zentral)
 # Eine Quelle für Banner, Report-Header UND Report-Footer (behebt Rev04/Rev05-Drift).
-$HephaistosVersion = '1.1.0'
+$HephaistosVersion = '1.2.0'
 
 # Konsole auf UTF-8, damit Haken/Linien-Zeichen sauber dargestellt werden
 # (in WinPE/OOBE nicht immer möglich - best effort wie im Original).
@@ -150,6 +150,10 @@ function Get-HephaistosDeviceInfo {
     # Service Tag + Modell (Port aus SLG-Onboarding.ps1 Pfad-Block).
     # Fallback wie START-ONBOARDING.cmd: liefert WMI keinen Service Tag,
     # wird er manuell abgefragt (Aufkleber Unterseite).
+    # -NoPrompt (v1.2.0): fuer nicht-interaktive Laeufe (Auto-Abnahme als
+    # SYSTEM) - NIE Read-Host; Serial kann dann leer zurueckkommen, der
+    # Aufrufer muss das behandeln.
+    param([switch]$NoPrompt)
     $serial = $null; $model = ''
     try {
         $bios = Get-CimInstance Win32_BIOS -ErrorAction Stop
@@ -161,6 +165,7 @@ function Get-HephaistosDeviceInfo {
     } catch { }
     if (-not $model) { $model = 'Unbekanntes Modell' }
     while (-not $serial) {
+        if ($NoPrompt) { break }
         Write-Host 'Seriennummer konnte nicht automatisch gelesen werden.' -ForegroundColor Yellow
         $serial = (Read-Host 'Service Tag bitte manuell eingeben (Aufkleber Unterseite)').Trim() -replace '\s', ''
     }
@@ -452,7 +457,7 @@ Block WORTGLEICH am Anfang - nur die FallbackRoots-Zeile wird je Phase angepasst
 (Reihenfolge: Staged (C:) vor Stick, siehe SPEC §7.x der jeweiligen Datei).
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.1.0'
+$Script:HephVersion = '1.2.0'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots je Phase; Beispiel OOBE: Staged (C:) zuerst, dann Stick.
 $Script:HephFallbackRoots = @('C:\OSDCloud\HEPHAISTOS\Fallback')

@@ -18,7 +18,7 @@
 .PARAMETER NoReport
     Nur Konsolen-/Text-/JSON-Ausgabe - HTML/PDF/Teams/Mail entfallen.
 .NOTES
-    HEPHAISTOS v1.1.0 - portiert aus USB_ScriptTool Rev05
+    HEPHAISTOS v1.2.0 - portiert aus USB_ScriptTool Rev05
     (Test-SLGDeviceOnboarding.ps1 Rev04 + Invoke-Step4Compliance aus
     SLG-Onboarding.ps1). PowerShell 5.1. UTF-8 mit BOM.
     Dreistufiges Ergebnis - unkritische Checks (Windows Update, Pending
@@ -43,11 +43,15 @@
 param(
     [switch]$SkipWindowsUpdateScan,
     [int]$MinBuild = 0,
-    [switch]$NoReport
+    [switch]$NoReport,
+    # v1.2.0: für die Auto-Abnahme (geplante Aufgabe, SYSTEM, unsichtbar):
+    # keinerlei Eingaben - Techniker-Default wird übernommen, Secrets (Teams/
+    # Mail) werden übersprungen. Reports entstehen wie gewohnt auf dem Stick.
+    [switch]$NonInteractive
 )
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.1.0'
+$Script:HephVersion = '1.2.0'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots fuer die Abnahme: Stick-Fallback zuerst, dann gestagte Kopie auf C:.
 # Minimal-Suche nach dem Stick VOR dem Lib-Load (Find-HephaistosUsb liegt erst in der Lib).
@@ -98,7 +102,18 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit 1
 }
 
-$dev    = Get-HephaistosDeviceInfo
+# NonInteractive (v1.2.0): niemals auf einen Prompt laufen - bei leerem
+# Service Tag klarer Abbruch statt unsichtbar haengendem Read-Host (SYSTEM).
+# Get-Command-Guard: eine veraltete Lib-Kopie ohne -NoPrompt darf nicht crashen.
+if ($NonInteractive -and (Get-Command Get-HephaistosDeviceInfo).Parameters.ContainsKey('NoPrompt')) {
+    $dev = Get-HephaistosDeviceInfo -NoPrompt
+} else {
+    $dev = Get-HephaistosDeviceInfo
+}
+if ($NonInteractive -and -not $dev.Serial) {
+    Write-Host 'FEHLER: Service Tag nicht lesbar - nicht-interaktiver Lauf wird abgebrochen.' -ForegroundColor Red
+    exit 1
+}
 $Serial = $dev.Serial
 $Model  = $dev.Model
 $IsOobe = ($env:USERNAME -ieq 'defaultuser0')
@@ -177,8 +192,12 @@ foreach ($cand in @((Join-Path $DevDir 'technician.txt'), 'C:\OSDCloud\HEPHAISTO
         } catch { }
     }
 }
-if ($techDefault) { $technician = Get-TechnicianName -Default $techDefault }
-else              { $technician = Get-TechnicianName }
+if ($NonInteractive) {
+    $technician = 'Automatisch (Auto-Abnahme)'
+    if ($techDefault) { $technician = $techDefault }
+    Write-HephDim ('NonInteractive: Techniker-Name uebernommen: {0}' -f $technician)
+} elseif ($techDefault) { $technician = Get-TechnicianName -Default $techDefault }
+else                    { $technician = Get-TechnicianName }
 
 # Primaerer Benutzer = interaktiv angemeldeter Mitarbeiter (Konsolen-Session)
 $primaryUser = $null
@@ -695,7 +714,9 @@ if ($NoReport) {
         $secrets = $null
         $secretsPath = $null
         if ($UsbRoot) { $secretsPath = Join-Path $UsbRoot 'HEPHAISTOS-Secrets\hephaistos.secrets.enc.json' }
-        if ($secretsPath -and (Test-Path $secretsPath)) {
+        if ($NonInteractive) {
+            Write-HephDim 'NonInteractive: Secrets werden uebersprungen - Teams-Karte/Mail entfallen (Mail spaeter via SEND-REPORTS).'
+        } elseif ($secretsPath -and (Test-Path $secretsPath)) {
             Write-HephInfo 'Secrets-Blob gefunden - Passphrase wird fuer Teams-Karte/Mailversand benoetigt.'
             $secrets = Get-HephaistosSecrets -Path $secretsPath
             if (-not $secrets) {

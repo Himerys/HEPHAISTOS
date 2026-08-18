@@ -16,7 +16,7 @@
     Nur Stick-Inhalte aktualisieren (ohne WinPE/USB neu zu bauen):
         ... -SkipUsbCreation
 .NOTES
-    HEPHAISTOS v1.1.0 - portiert/erweitert aus USB_ScriptTool Rev05 (Handoff §8).
+    HEPHAISTOS v1.2.0 - portiert/erweitert aus USB_ScriptTool Rev05 (Handoff §8).
     PowerShell 5.1. UTF-8 mit BOM.
 #>
 #Requires -RunAsAdministrator
@@ -28,7 +28,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Script:HephVersion = '1.1.0'
+$Script:HephVersion = '1.2.0'
 
 # --- Repo-Checkout + zentrale Config (RawBase kommt NUR aus deploy.json) ----
 $RepoRoot   = Split-Path -Parent $PSScriptRoot

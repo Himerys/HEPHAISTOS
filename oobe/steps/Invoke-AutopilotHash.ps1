@@ -18,7 +18,7 @@
            Timeout: gelber Hinweis auf die GroupTag-Gruppenzuordnung, KEIN Neustart.
     Erwartet die geladene HEPHAISTOS-Bibliothek (lib\Hephaistos.Common.ps1) im Scope.
 .NOTES
-    HEPHAISTOS v1.1.0 - portiert aus USB_ScriptTool Rev05
+    HEPHAISTOS v1.2.0 - portiert aus USB_ScriptTool Rev05
     (SLG-Onboarding.ps1 / Invoke-Step3Hash + Scripts\Export-AutopilotHash.ps1 Rev02).
     Benötigt PowerShell 5.1 (OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM gespeichert
     (Pflicht für PS 5.1 + Umlaute).
@@ -118,21 +118,30 @@ if ($groupTags.Count -eq 0) {
 $tagPre = $null
 if ($Context.ContainsKey('GroupTagPreselect') -and $Context.GroupTagPreselect) { $tagPre = [string]$Context.GroupTagPreselect }
 if ($tagPre -and ($groupTags -notcontains $tagPre)) { $tagPre = $null }   # nur gültige Tags als Default
-Write-Host ''
-for ($i = 0; $i -lt $groupTags.Count; $i++) {
-    $mark = ''
-    if ($tagPre -and ($groupTags[$i] -ieq $tagPre)) { $mark = '   <- Vorauswahl (WinPE)' }
-    Write-Host ("  [{0}] {1}{2}" -f ($i + 1), $groupTags[$i], $mark)
-}
-$tagPrompt = 'Group Tag'
-if ($tagPre) { $tagPrompt = ('Group Tag [Enter = {0}]' -f $tagPre) }
-$sel = (Read-Host $tagPrompt).Trim()
+# Specialize-Autostart (v1.2.0): läuft der Schritt aus dem Windows-Setup heraus,
+# wird die WinPE-Vorauswahl ohne Rückfrage übernommen (keine vermeidbare offene
+# Eingabe im Setup-Vollbild). Ohne Vorauswahl bleibt der Prompt bestehen.
+$specializeMode = ($Context.ContainsKey('SpecializeMode') -and $Context.SpecializeMode)
 $tag = $null
-$idx = 0
-if (-not $sel -and $tagPre) {
+if ($specializeMode -and $tagPre) {
     $tag = $tagPre
-} elseif ([int]::TryParse($sel, [ref]$idx) -and $idx -ge 1 -and $idx -le $groupTags.Count) {
-    $tag = $groupTags[$idx - 1]
+    Write-HephDim ('Group Tag automatisch übernommen (WinPE-Vorauswahl): {0}' -f $tag)
+} else {
+    Write-Host ''
+    for ($i = 0; $i -lt $groupTags.Count; $i++) {
+        $mark = ''
+        if ($tagPre -and ($groupTags[$i] -ieq $tagPre)) { $mark = '   <- Vorauswahl (WinPE)' }
+        Write-Host ("  [{0}] {1}{2}" -f ($i + 1), $groupTags[$i], $mark)
+    }
+    $tagPrompt = 'Group Tag'
+    if ($tagPre) { $tagPrompt = ('Group Tag [Enter = {0}]' -f $tagPre) }
+    $sel = (Read-Host $tagPrompt).Trim()
+    $idx = 0
+    if (-not $sel -and $tagPre) {
+        $tag = $tagPre
+    } elseif ([int]::TryParse($sel, [ref]$idx) -and $idx -ge 1 -and $idx -le $groupTags.Count) {
+        $tag = $groupTags[$idx - 1]
+    }
 }
 if (-not $tag) {
     Write-HephWarn 'Ungültige Auswahl - abgebrochen.'
@@ -355,19 +364,26 @@ Write-Progress -Activity 'Autopilot-Profilzuweisung' -Completed
 if ($assigned) {
     $elapsed = (Get-Date) - $pollStart
     Write-HephOk ('Autopilot-Profil zugewiesen (Status: {0}, nach {1:mm\:ss}).' -f $lastStatus, $elapsed)
-    Write-HephResult -Success $true -Text 'Profilzuweisung bestätigt - Gerät startet automatisch neu.'
-    Write-Host ''
-    Write-HephInfo 'Automatischer Neustart in 10 Sekunden - das Gerät bootet direkt in das Autopilot-Provisioning.'
-    # Orchestrator informieren (Hashtable ist by-reference): sauberer Exit-Pfad
-    # statt Zusammenfassung/Transcript gegen den laufenden Shutdown zu rennen.
-    $Context['AutoReboot'] = $true
-    shutdown.exe /r /t 10
-    Write-Host -NoNewline '  Neustart in ' -ForegroundColor Cyan
-    for ($s = 10; $s -ge 1; $s--) {
-        Write-Host -NoNewline ('{0} ' -f $s) -ForegroundColor Cyan
-        Start-Sleep -Seconds 1
+    if ($specializeMode) {
+        # Specialize-Autostart (v1.2.0): Die Zuweisung steht fest, BEVOR die OOBE
+        # überhaupt startet - ein Neustart ist damit überflüssig. Das Setup fährt
+        # fort und die OOBE geht direkt in das zugewiesene Autopilot-Profil.
+        Write-HephResult -Success $true -Text 'Profilzuweisung bestätigt - Windows-Setup fährt fort, OOBE startet direkt in das Provisioning.'
+    } else {
+        Write-HephResult -Success $true -Text 'Profilzuweisung bestätigt - Gerät startet automatisch neu.'
+        Write-Host ''
+        Write-HephInfo 'Automatischer Neustart in 10 Sekunden - das Gerät bootet direkt in das Autopilot-Provisioning.'
+        # Orchestrator informieren (Hashtable ist by-reference): sauberer Exit-Pfad
+        # statt Zusammenfassung/Transcript gegen den laufenden Shutdown zu rennen.
+        $Context['AutoReboot'] = $true
+        shutdown.exe /r /t 10
+        Write-Host -NoNewline '  Neustart in ' -ForegroundColor Cyan
+        for ($s = 10; $s -ge 1; $s--) {
+            Write-Host -NoNewline ('{0} ' -f $s) -ForegroundColor Cyan
+            Start-Sleep -Seconds 1
+        }
+        Write-Host ''
     }
-    Write-Host ''
 } else {
     Write-HephWarn ('Timeout: Profilzuweisung wurde innerhalb von {0} Minuten nicht bestätigt.' -f [int]($maxPolls * $intervalSec / 60))
     Write-HephWarn 'Profilzuweisung prüfen: Gruppenzuordnung des GroupTags.'

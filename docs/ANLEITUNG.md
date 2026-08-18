@@ -1,6 +1,6 @@
 # HEPHAISTOS — Techniker-Anleitung
 
-**SLG Notebook-Onboarding (HEPHAISTOS) v1.1.0** — portiert und korrigiert aus dem
+**SLG Notebook-Onboarding (HEPHAISTOS) v1.2.0** — portiert und korrigiert aus dem
 USB_ScriptTool (Rev03–Rev05). Diese Anleitung beschreibt den **neuen** Ablauf:
 kompletter Disk-Wipe via OSDCloud, Neuaufbau nach Vorlage, alle Scripts kommen zur
 Laufzeit aus dem GitHub-Repo. Der USB-Stick ist statisch und wartungsfrei.
@@ -216,8 +216,18 @@ alten Version).
 
 ### 3.2 Phase 2 — OOBE: BIOS + Autopilot-Hash
 
-Nach dem Neustart bootet das frisch installierte Windows in die OOBE
-(Region/Sprache-Auswahl). Dort:
+**Autostart (ab v1.2.0, Default an):** Ist `Oobe.AutoLaunch` aktiv, öffnet sich
+die HEPHAISTOS-Konsole nach dem Neustart **automatisch** während „Geräte werden
+vorbereitet" (Specialize-Pass des Windows-Setups) — Shift+F10 entfällt. Das
+GroupTag und der Technikername werden automatisch aus der WinPE-Phase
+übernommen; nur die **Team-Passphrase** wird noch abgefragt. Das anschließende
+Profilzuweisungs-Polling (bis zu 30 min) läuft sichtbar in dieser Konsole —
+das Setup ist dann nicht „hängen geblieben". Nach bestätigter Profilzuweisung fährt
+das Setup einfach fort und die OOBE startet **ohne zusätzlichen Neustart**
+direkt in das Autopilot-Provisioning.
+
+Der folgende manuelle Weg gilt als **Fallback** (Autostart deaktiviert oder
+fehlgeschlagen — dann erscheint die Region-Auswahl wie gewohnt):
 
 1. **Shift+F10** drücken — eine Eingabeaufforderung öffnet sich.
 2. Das gestagte Onboarding starten — **entweder** in zwei Schritten:
@@ -272,9 +282,21 @@ aus:
    - **Timeout:** gelbe Meldung `Profilzuweisung prüfen: Gruppenzuordnung des
      GroupTags` — **kein** automatischer Neustart. Siehe [6.5](#65-profilzuweisung-timeout-beim-polling).
 
+**Auto-Abnahme (ab v1.2.0, Default an):** Die OOBE-Phase merkt die geplante
+Aufgabe `HEPHAISTOS-AutoAbnahme` vor (SYSTEM, startet verzögert nach einer
+Anmeldung). Sie wartet selbstständig, bis das Provisioning durch ist (regulärer
+Benutzer angemeldet, Intune Management Extension installiert, Stick eingesteckt)
+und führt die Abnahme dann **unsichtbar und ohne Eingaben** aus — Report landet
+automatisch im Geräteordner auf dem Stick, Protokoll unter
+`C:\OSDCloud\HEPHAISTOS\autoabnahme.log`. Nach bestandener Abnahme entfernt sich
+die Aufgabe selbst; Teams-Karte/Direkt-Mail entfallen im Automatik-Lauf (Mail
+kommt wie gewohnt gesammelt über SEND-REPORTS). Für die Teams-Karte bei Bedarf
+zusätzlich manuell `START-ABNAHME.cmd` starten.
+
 ### 3.3 Phase 3 — Autopilot-Provisioning (Hybrid Join)
 
-Nach dem Auto-Reboot durchläuft das Gerät das Autopilot-Provisioning wie gewohnt
+Direkt nach dem Setup (Autostart-Weg, ohne zusätzlichen Neustart) bzw. nach dem
+Auto-Reboot (manueller Weg) durchläuft das Gerät das Autopilot-Provisioning wie gewohnt
 (Hybrid Entra Join, unverändertes Join-Modell). Danach folgt die Abnahme
 ([Kapitel 4](#4-abnahme-und-reports)).
 
@@ -375,6 +397,8 @@ auf GitHub wirken sofort auf alle Sticks. Offline greift der Stick-Spiegel
 | `Languages` / `DefaultLanguageKey` | Sprachmenü der WinPE-Phase (1=DE Default, 2=FR, 3=PL); je Sprache optional `GroupTag` als Vorauswahl (ab v1.1.0) |
 | `Bios.StorageMode` | Ziel-Storage-Modus, Default `Ahci` — wird VOR der Installation in WinPE geprüft/gesetzt; `Keep` = Preflight aus (ab v1.1.0, siehe [2.5](#25-cctk-und-vc-runtime-auf-den-stick-kopieren-manuell)) |
 | `Bios.DefaultPackage` / `Bios.Packages` | Standard- bzw. modell-spezifische CCTK-Paketordner unter `_HEPHAISTOS\Tools\` (ab v1.1.0, siehe [2.5](#25-cctk-und-vc-runtime-auf-den-stick-kopieren-manuell)) |
+| `Oobe.AutoLaunch` | Default `true` — OOBE-Phase startet automatisch aus dem Windows-Setup (Specialize); `false` = manuell per Shift+F10 + `c:\o` (ab v1.2.0) |
+| `Abnahme.AutoRun` / `Abnahme.DelayMinutes` | Default `true` / `5` — Abnahme läuft nach dem Provisioning automatisch (geplante Aufgabe, nicht-interaktiv); `false` = nur manuell (ab v1.2.0) |
 | `MinBuild` | Mindest-Build für die Abnahme, Default **26200** (= 25H2). Eine Quelle für WinPE und Abnahme. |
 | `RemoveWinRE` | Default `false` — siehe [5.3](#53-removewinre-flag-mit-konsequenzen) |
 | `GroupTags` | Auswahlreihenfolge im Hash-Schritt (`SLGDE`, `SLGFR`, `SLGPL`, `SLGTEST`) |
@@ -597,6 +621,19 @@ folgt zwingend:
 
 Die folgenden Punkte sind **nur auf echter Hardware** prüfbar und vor dem breiten
 Flotteneinsatz auf einem Testgerät (GroupTag `SLGTEST`) abzuhaken:
+
+- [ ] **OOBE-Autostart (v1.2.0):** Konsole erscheint sichtbar während „Geräte
+      werden vorbereitet"; Passphrase-Eingabe funktioniert dort; nach der
+      Zuweisung fährt das Setup ohne Neustart in die OOBE → Autopilot. Falls die
+      Konsole NICHT sichtbar ist: `Oobe.AutoLaunch` auf `false` und Fallback
+      Shift+F10 nutzen — bitte melden.
+- [ ] **Auto-Abnahme (v1.2.0):** geplante Aufgabe feuert nach der Anmeldung
+      (Verzögerung beachten), Bedingungs-Checks greifen (defaultuser0/IME/Stick),
+      Report entsteht, Aufgabe entfernt sich nach bestandener Abnahme
+      (`autoabnahme.log` prüfen).
+- [ ] **Storage-Preflight (v1.1.0):** auf einem RAID-Werksgerät den kompletten
+      Zyklus prüfen (Disk leeren → AHCI → automatischer Stick-Boot → Installation)
+      inkl. `cctk --embsataraid`-Ausgabeformat.
 
 - [ ] **CCTK auf Dell Pro 16 Plus:** vorentpacktes Paket (`applyconfig.bat`) und
       SCE-Fallback inkl. VC++-Workaround anwenden, Exit-Code 0, BIOS-Einstellungen

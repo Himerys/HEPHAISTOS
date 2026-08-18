@@ -15,7 +15,7 @@
         [7] Neustart via wpeutil reboot (10-Sekunden-Countdown)
     Status pro Gerät: <Stick>\Logs\<ServiceTag>\state\*.done (Flag-Namen wie im Original).
 .NOTES
-    HEPHAISTOS v1.1.0 - portiert aus USB_ScriptTool Rev05 (START-ONBOARDING.cmd +
+    HEPHAISTOS v1.2.0 - portiert aus USB_ScriptTool Rev05 (START-ONBOARDING.cmd +
     SLG-Onboarding.ps1). PowerShell 5.1. UTF-8 mit BOM (Pflicht für PS 5.1 + Umlaute).
     Bugfix (Handoff 7.1): step2_osinstall.started wird ERST unmittelbar vor
     Start-OSDCloud geschrieben - nicht schon bei der Menüauswahl wie im alten
@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.1.0'
+$Script:HephVersion = '1.2.0'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots je Phase - Boot-Phase: <Stick>:\_HEPHAISTOS\Fallback. Die Lib selbst
 # kann vom Stick kommen, deshalb Minimal-Stick-Suche VOR dem Lib-Load (DriveInfo-
@@ -128,6 +128,80 @@ function Update-HephFallbackMirror {
     }
     Write-Progress -Activity 'Fallback-Spiegel aus dem Repo aktualisieren' -Completed
     @{ Updated = $ok; Kept = $keep }
+}
+
+function Add-HephSpecializeHook {
+    # OOBE-Autostart (v1.2.0): hängt einen RunSynchronous-Befehl an den
+    # Specialize-Pass des gestagten Unattend an. WICHTIG: OSDCloud staged unter
+    # C:\Windows\Panther\Unattend.xml ein EIGENES Unattend (Treiber-Injection) -
+    # das darf nicht überschrieben werden, deshalb echtes XML-Merge. Idempotent:
+    # ein bereits vorhandener HEPHAISTOS-Eintrag wird nicht dupliziert.
+    param(
+        [Parameter(Mandatory = $true)][string]$UnattendPath,
+        [Parameter(Mandatory = $true)][string]$Command,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+    $ns    = 'urn:schemas-microsoft-com:unattend'
+    $wcmNs = 'http://schemas.microsoft.com/WMIConfig/2002/State'
+    if (Test-Path $UnattendPath) {
+        [xml]$x = Get-Content -Path $UnattendPath -Raw
+    } else {
+        [xml]$x = ('<?xml version="1.0" encoding="utf-8"?><unattend xmlns="{0}"></unattend>' -f $ns)
+    }
+    $root = $x.DocumentElement
+    $settings = $null
+    foreach ($n in $root.ChildNodes) {
+        if ($n.LocalName -eq 'settings' -and $n.GetAttribute('pass') -eq 'specialize') { $settings = $n; break }
+    }
+    if (-not $settings) {
+        $settings = $x.CreateElement('settings', $ns)
+        $settings.SetAttribute('pass', 'specialize')
+        $null = $root.AppendChild($settings)
+    }
+    $comp = $null
+    foreach ($n in $settings.ChildNodes) {
+        if ($n.LocalName -eq 'component' -and $n.GetAttribute('name') -eq 'Microsoft-Windows-Deployment') { $comp = $n; break }
+    }
+    if (-not $comp) {
+        $comp = $x.CreateElement('component', $ns)
+        $comp.SetAttribute('name', 'Microsoft-Windows-Deployment')
+        $comp.SetAttribute('processorArchitecture', 'amd64')
+        $comp.SetAttribute('publicKeyToken', '31bf3856ad364e35')
+        $comp.SetAttribute('language', 'neutral')
+        $comp.SetAttribute('versionScope', 'nonSxS')
+        $null = $settings.AppendChild($comp)
+    }
+    $runs = $null
+    foreach ($n in $comp.ChildNodes) {
+        if ($n.LocalName -eq 'RunSynchronous') { $runs = $n; break }
+    }
+    if (-not $runs) {
+        $runs = $x.CreateElement('RunSynchronous', $ns)
+        $null = $comp.AppendChild($runs)
+    }
+    $maxOrder = 0
+    foreach ($n in $runs.ChildNodes) {
+        if ($n.LocalName -ne 'RunSynchronousCommand') { continue }
+        foreach ($c in $n.ChildNodes) {
+            if ($c.LocalName -eq 'Path' -and $c.InnerText -match 'HEPHAISTOS') { return 'bereits vorhanden' }
+            if ($c.LocalName -eq 'Order') {
+                $o = 0
+                if ([int]::TryParse($c.InnerText, [ref]$o) -and $o -gt $maxOrder) { $maxOrder = $o }
+            }
+        }
+    }
+    $cmdEl = $x.CreateElement('RunSynchronousCommand', $ns)
+    $attr = $x.CreateAttribute('wcm', 'action', $wcmNs)
+    $attr.Value = 'add'
+    $null = $cmdEl.Attributes.Append($attr)
+    foreach ($pair in @(@('Order', [string]($maxOrder + 1)), @('Description', $Description), @('Path', $Command))) {
+        $el = $x.CreateElement($pair[0], $ns)
+        $el.InnerText = $pair[1]
+        $null = $cmdEl.AppendChild($el)
+    }
+    $null = $runs.AppendChild($cmdEl)
+    $x.Save($UnattendPath)
+    return ('Order {0}' -f ($maxOrder + 1))
 }
 
 # ============================================================ Gerät + Transcript
@@ -479,6 +553,22 @@ if ($stagingOk) {
         $tpl.Replace('{{RAWBASE}}', $Script:HephRawBase) | Set-Content -Path (Join-Path $stagedRoot 'oobe.cmd') -Encoding ASCII
         # Kurzbefehl für die OOBE-Konsole (v1.1.0): "c:\o" statt langem Pfad.
         try { $tpl.Replace('{{RAWBASE}}', $Script:HephRawBase) | Set-Content -Path 'C:\o.cmd' -Encoding ASCII } catch { }
+
+        # --- OOBE-Autostart (v1.2.0, deploy.json Oobe.AutoLaunch): oobe.cmd wird
+        #     über den Specialize-Pass des Windows-Setups gestartet - Shift+F10
+        #     entfällt. Merge in das von OSDCloud gestagte Unattend (Treiber!).
+        if ($cfg.Oobe -and $cfg.Oobe.AutoLaunch -eq $true) {
+            try {
+                $hookRes = Add-HephSpecializeHook -UnattendPath 'C:\Windows\Panther\Unattend.xml' `
+                    -Command 'cmd.exe /c C:\OSDCloud\HEPHAISTOS\oobe.cmd /specialize' `
+                    -Description 'HEPHAISTOS OOBE-Onboarding (BIOS + Autopilot-Hash)'
+                Write-HephOk ('OOBE-Autostart eingerichtet (Specialize-Pass, {0}) - Shift+F10 wird nur noch als Fallback gebraucht.' -f $hookRes)
+            } catch {
+                Write-HephWarn ('OOBE-Autostart konnte nicht eingerichtet werden ({0}) - Fallback: Shift+F10, dann c:\o.' -f $_.Exception.Message)
+            }
+        } else {
+            Write-HephDim 'OOBE-Autostart deaktiviert (deploy.json Oobe.AutoLaunch) - Start per Shift+F10, dann c:\o.'
+        }
         Write-HephOk ('oobe.cmd gestaged (Quelle: {0}).' -f $tplInfo.Source)
     } catch {
         $stagingOk = $false
@@ -511,6 +601,7 @@ if ($stagingOk) {
             'oobe\steps\Invoke-RemoveWinRE.ps1',
             'oobe\steps\Invoke-AutopilotHash.ps1',
             'abnahme\Test-HephaistosDevice.ps1',
+            'abnahme\Invoke-AutoAbnahme.ps1',
             'abnahme\report\New-HephaistosHtmlReport.ps1',
             'abnahme\report\Convert-HtmlToPdf.ps1',
             'abnahme\report\Send-TeamsCard.ps1',
