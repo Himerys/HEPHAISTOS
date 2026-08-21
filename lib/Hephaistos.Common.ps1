@@ -12,14 +12,14 @@
           werden beim nächsten Entsperren automatisch neu verschlüsselt)
         - Graph-App-Token (client_credentials), Technikername, VC++-Runtime-Workaround
 .NOTES
-    HEPHAISTOS v1.2.0 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
+    HEPHAISTOS v1.2.1 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
     Benötigt PowerShell 5.1 (WinPE/OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM
     gespeichert (Pflicht für PS 5.1 + Umlaute).
 #>
 
 # ============================================================ Version (zentral)
 # Eine Quelle für Banner, Report-Header UND Report-Footer (behebt Rev04/Rev05-Drift).
-$HephaistosVersion = '1.2.0'
+$HephaistosVersion = '1.2.1'
 
 # Konsole auf UTF-8, damit Haken/Linien-Zeichen sauber dargestellt werden
 # (in WinPE/OOBE nicht immer möglich - best effort wie im Original).
@@ -390,6 +390,37 @@ function Get-TechnicianName {
 }
 
 # ============================================================ VC++-Runtime-Workaround
+function Save-HephTeamsWebhookCache {
+    # v1.2.1: Teams-Webhook-URL DPAPI-verschlüsselt (Machine-Scope) auf dem
+    # GERÄT cachen. Wird in der OOBE-Phase beim ohnehin nötigen Secrets-
+    # Entsperren geschrieben, damit die Auto-Abnahme die Teams-Karte OHNE
+    # Passphrase posten kann. Machine-Scope heißt: außerhalb dieses einen
+    # Geräts ist die Datei kryptographisch wertlos (kein Klartext at rest,
+    # nichts im Repo/auf dem Stick); sie verschwindet mit dem nächsten Wipe.
+    param(
+        [Parameter(Mandatory = $true)][string]$Url,
+        [string]$Path = 'C:\OSDCloud\HEPHAISTOS\teams.webhook.bin'
+    )
+    Add-Type -AssemblyName System.Security
+    $entropy = [Text.Encoding]::UTF8.GetBytes('HEPHAISTOS.TeamsWebhook.v1')
+    $cipher  = [Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($Url), $entropy, [Security.Cryptography.DataProtectionScope]::LocalMachine)
+    $null = New-Item -Path (Split-Path -Parent $Path) -ItemType Directory -Force
+    [IO.File]::WriteAllBytes($Path, $cipher)
+}
+
+function Get-HephTeamsWebhookCache {
+    # Gegenstück zu Save-HephTeamsWebhookCache: liefert die Webhook-URL oder
+    # $null (Datei fehlt, anderes Gerät, beschädigt - alles still $null).
+    param([string]$Path = 'C:\OSDCloud\HEPHAISTOS\teams.webhook.bin')
+    try {
+        if (-not (Test-Path $Path)) { return $null }
+        Add-Type -AssemblyName System.Security
+        $entropy = [Text.Encoding]::UTF8.GetBytes('HEPHAISTOS.TeamsWebhook.v1')
+        $plain = [Security.Cryptography.ProtectedData]::Unprotect([IO.File]::ReadAllBytes($Path), $entropy, [Security.Cryptography.DataProtectionScope]::LocalMachine)
+        return [Text.Encoding]::UTF8.GetString($plain)
+    } catch { return $null }
+}
+
 function Get-HephBiosPackageDir {
     # Modell-spezifisches CCTK-Paket auflösen (v1.1.0): deploy.json Bios.Packages
     # mappt Modell-Teilstrings auf Ordnernamen unter <ToolsDir>. Der LÄNGSTE
@@ -457,7 +488,7 @@ Block WORTGLEICH am Anfang - nur die FallbackRoots-Zeile wird je Phase angepasst
 (Reihenfolge: Staged (C:) vor Stick, siehe SPEC §7.x der jeweiligen Datei).
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.2.0'
+$Script:HephVersion = '1.2.1'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots je Phase; Beispiel OOBE: Staged (C:) zuerst, dann Stick.
 $Script:HephFallbackRoots = @('C:\OSDCloud\HEPHAISTOS\Fallback')

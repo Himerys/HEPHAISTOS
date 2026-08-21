@@ -1,5 +1,24 @@
 # CHANGELOG
 
+## 1.2.1 (2026-08-21) — Teams-Karte in der Auto-Abnahme (ohne Passphrase)
+
+### Neu
+
+- **Auto-Abnahme postet jetzt die Teams-Karte — ohne Passphrase.** Mechanik:
+  Die OOBE-Phase entsperrt die Secrets ohnehin (Hash-Upload); in diesem Moment
+  wird NUR die Teams-Webhook-URL zusätzlich **DPAPI-verschlüsselt
+  (Machine-Scope)** auf dem Gerät hinterlegt
+  (`C:\OSDCloud\HEPHAISTOS\teams.webhook.bin`, neue Lib-Funktionen
+  `Save-/Get-HephTeamsWebhookCache`). Die Abnahme nutzt als Webhook-Quelle den
+  Secrets-Blob ODER diesen Geräte-Cache — der nicht-interaktive Automatik-Lauf
+  kommt damit ohne Passphrase zur Karte. Sicherheitsbetrachtung: kein Klartext
+  at rest, nichts im Repo/auf dem Stick, außerhalb genau dieses Geräts
+  kryptographisch wertlos (DPAPI-Maschinenschlüssel), verschwindet mit dem
+  nächsten Wipe. Wurden die Secrets in der OOBE nicht entsperrt, existiert kein
+  Cache und die Karte entfällt still (Dim-Hinweis). Versions-Skew-geschützt
+  über Get-Command-Guards. Hardware-offen: DPAPI-Roundtrip auf dem Zielgerät
+  (hier nicht ausführbar, Windows-API).
+
 ## 1.2.0 (2026-08-14) — Autostart OOBE + Auto-Abnahme
 
 ### Neu

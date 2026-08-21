@@ -1,6 +1,6 @@
 # HEPHAISTOS — Techniker-Anleitung
 
-**SLG Notebook-Onboarding (HEPHAISTOS) v1.2.0** — portiert und korrigiert aus dem
+**SLG Notebook-Onboarding (HEPHAISTOS) v1.2.1** — portiert und korrigiert aus dem
 USB_ScriptTool (Rev03–Rev05). Diese Anleitung beschreibt den **neuen** Ablauf:
 kompletter Disk-Wipe via OSDCloud, Neuaufbau nach Vorlage, alle Scripts kommen zur
 Laufzeit aus dem GitHub-Repo. Der USB-Stick ist statisch und wartungsfrei.
@@ -289,9 +289,12 @@ Benutzer angemeldet, Intune Management Extension installiert, Stick eingesteckt)
 und führt die Abnahme dann **unsichtbar und ohne Eingaben** aus — Report landet
 automatisch im Geräteordner auf dem Stick, Protokoll unter
 `C:\OSDCloud\HEPHAISTOS\autoabnahme.log`. Nach bestandener Abnahme entfernt sich
-die Aufgabe selbst; Teams-Karte/Direkt-Mail entfallen im Automatik-Lauf (Mail
-kommt wie gewohnt gesammelt über SEND-REPORTS). Für die Teams-Karte bei Bedarf
-zusätzlich manuell `START-ABNAHME.cmd` starten.
+die Aufgabe selbst. **Die Teams-Karte wird auch im Automatik-Lauf gepostet** —
+ohne Passphrase: Die OOBE-Phase hinterlegt den Webhook beim Secrets-Entsperren
+DPAPI-verschlüsselt auf dem Gerät (ab v1.2.1; nur nutzbar auf genau diesem
+Gerät, verschwindet mit dem nächsten Wipe). Wurden die Secrets in der OOBE
+nicht entsperrt, entfällt die Karte still. Direkt-Mail entfällt im
+Automatik-Lauf immer (Mail kommt wie gewohnt gesammelt über SEND-REPORTS).
 
 ### 3.3 Phase 3 — Autopilot-Provisioning (Hybrid Join)
 
@@ -608,6 +611,10 @@ folgt zwingend:
    dem Stick oder im Repo notieren.
 4. Die **Teams-Webhook-URL wie ein Secret behandeln** — wer sie hat, kann in den
    Kanal posten. Deshalb liegt sie im Secrets-Blob, nicht in der Config.
+   Zusätzlich legt die OOBE-Phase (ab v1.2.1) eine **DPAPI-verschlüsselte
+   Gerätekopie** an (`C:\OSDCloud\HEPHAISTOS\teams.webhook.bin`, Machine-Scope):
+   nie Klartext, außerhalb des Geräts wertlos, wird beim nächsten Wipe zerstört —
+   ermöglicht die Teams-Karte der Auto-Abnahme ohne Passphrase.
 5. `.gitignore` schützt `*secrets*`, `HEPHAISTOS-Secrets/`, `Logs/`, `*.log` — vor
    jedem Push trotzdem prüfen, dass keine Geräte-Logs oder Blobs im Commit sind.
 6. Der **Stick enthält Gerätedaten** (Logs, Reports, Hash-CSVs) und den

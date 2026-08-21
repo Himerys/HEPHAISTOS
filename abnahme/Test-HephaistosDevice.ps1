@@ -18,7 +18,7 @@
 .PARAMETER NoReport
     Nur Konsolen-/Text-/JSON-Ausgabe - HTML/PDF/Teams/Mail entfallen.
 .NOTES
-    HEPHAISTOS v1.2.0 - portiert aus USB_ScriptTool Rev05
+    HEPHAISTOS v1.2.1 - portiert aus USB_ScriptTool Rev05
     (Test-SLGDeviceOnboarding.ps1 Rev04 + Invoke-Step4Compliance aus
     SLG-Onboarding.ps1). PowerShell 5.1. UTF-8 mit BOM.
     Dreistufiges Ergebnis - unkritische Checks (Windows Update, Pending
@@ -51,7 +51,7 @@ param(
 )
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.2.0'
+$Script:HephVersion = '1.2.1'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots fuer die Abnahme: Stick-Fallback zuerst, dann gestagte Kopie auf C:.
 # Minimal-Suche nach dem Stick VOR dem Lib-Load (Find-HephaistosUsb liegt erst in der Lib).
@@ -715,7 +715,7 @@ if ($NoReport) {
         $secretsPath = $null
         if ($UsbRoot) { $secretsPath = Join-Path $UsbRoot 'HEPHAISTOS-Secrets\hephaistos.secrets.enc.json' }
         if ($NonInteractive) {
-            Write-HephDim 'NonInteractive: Secrets werden uebersprungen - Teams-Karte/Mail entfallen (Mail spaeter via SEND-REPORTS).'
+            Write-HephDim 'NonInteractive: Secrets werden uebersprungen - Mail spaeter via SEND-REPORTS; Teams-Karte nur ueber den Geraete-Cache (falls in der OOBE-Phase hinterlegt).'
         } elseif ($secretsPath -and (Test-Path $secretsPath)) {
             Write-HephInfo 'Secrets-Blob gefunden - Passphrase wird fuer Teams-Karte/Mailversand benoetigt.'
             $secrets = Get-HephaistosSecrets -Path $secretsPath
@@ -726,13 +726,28 @@ if ($NoReport) {
             Write-HephDim 'Kein Secrets-Blob auf dem Stick - Teams-Karte und Mailversand werden uebersprungen.'
         }
 
-        # --- Teams-Benachrichtigung (Webhook, keine Anmeldung noetig)
+        # --- Teams-Benachrichtigung (Webhook, keine Anmeldung noetig).
+        # v1.2.1: Webhook kommt aus dem Secrets-Blob ODER aus dem geraetelokalen
+        # DPAPI-Cache (von der OOBE-Phase beim Secrets-Entsperren hinterlegt) -
+        # damit postet auch die Auto-Abnahme (NonInteractive) ohne Passphrase.
+        $teamsWebhook = $null
+        $teamsSource  = ''
         if ($secrets -and $secrets.TeamsWebhookUrl) {
+            $teamsWebhook = [string]$secrets.TeamsWebhookUrl
+            $teamsSource  = 'Secrets-Blob'
+        } elseif (Get-Command Get-HephTeamsWebhookCache -ErrorAction SilentlyContinue) {
+            $teamsWebhook = Get-HephTeamsWebhookCache
+            if ($teamsWebhook) { $teamsSource = 'Geraete-Cache (DPAPI)' }
+        }
+        if ($teamsWebhook) {
+            Write-HephDim ('Teams-Webhook-Quelle: {0}' -f $teamsSource)
             Send-TeamsCard -ResultState $resultState -ReportName ([IO.Path]::GetFileName($(if ($pdf) { $pdf } else { $html }))) `
                 -Technician $technician -PrimaryUser $primaryUser -AttachmentPath $(if ($pdf) { $pdf } else { $html }) `
-                -WebhookUrl $secrets.TeamsWebhookUrl -AttachPdf:$attachPdf -Serial $Serial -Model $Model
+                -WebhookUrl $teamsWebhook -AttachPdf:$attachPdf -Serial $Serial -Model $Model
         } elseif ($secrets) {
             Write-HephDim 'Keine TeamsWebhookUrl im Secrets-Blob - Teams-Karte uebersprungen.'
+        } else {
+            Write-HephDim 'Kein Teams-Webhook verfuegbar (weder Secrets noch Geraete-Cache) - Teams-Karte uebersprungen.'
         }
 
         # --- Mailversand: am Kundengeraet bewusst KEINE Anmeldung (dort läuft die
