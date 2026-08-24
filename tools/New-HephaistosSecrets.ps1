@@ -14,7 +14,7 @@
     (<Stick>:\HEPHAISTOS-Secrets\hephaistos.secrets.enc.json), sonst aktuelles
     Verzeichnis mit Kopier-Hinweis.
 .NOTES
-    HEPHAISTOS v1.2.1 - portiert aus USB_ScriptTool Rev05 (Save-GraphConfig).
+    HEPHAISTOS v1.2.3 - portiert aus USB_ScriptTool Rev05 (Save-GraphConfig).
     PowerShell 5.1. UTF-8 mit BOM.
 #>
 param(
@@ -22,7 +22,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Script:HephVersion = '1.2.1'
+$Script:HephVersion = '1.2.3'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 
 # Lib-Load: bevorzugt LOKAL aus dem Repo-Checkout (dieses Tool liegt in tools\,

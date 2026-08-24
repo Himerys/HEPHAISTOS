@@ -1,6 +1,6 @@
 # HEPHAISTOS — Techniker-Anleitung
 
-**SLG Notebook-Onboarding (HEPHAISTOS) v1.2.1** — portiert und korrigiert aus dem
+**SLG Notebook-Onboarding (HEPHAISTOS) v1.2.3** — portiert und korrigiert aus dem
 USB_ScriptTool (Rev03–Rev05). Diese Anleitung beschreibt den **neuen** Ablauf:
 kompletter Disk-Wipe via OSDCloud, Neuaufbau nach Vorlage, alle Scripts kommen zur
 Laufzeit aus dem GitHub-Repo. Der USB-Stick ist statisch und wartungsfrei.
@@ -590,6 +590,14 @@ Logs/State ersatzweise unter `C:\OSDCloud\HEPHAISTOS\Logs\<ServiceTag>` (gelbe
 Warnung). Stick neu einstecken bzw. nach Abschluss die Ordner manuell auf den Stick
 kopieren, damit die Historie vollständig bleibt.
 
+**Direkt nach dem Neustart (Specialize-Konsole):** Die Konsole startet sehr früh —
+der USB-Stack ist dann oft noch nicht fertig. Seit v1.2.3 wartet die OOBE-Phase
+deshalb **bis zu 90 Sekunden aktiv** auf den Stick („Warte bis zu 90 Sekunden …").
+Taucht er trotzdem nicht auf: kurz ab- und wieder anstecken (löst eine
+Neu-Enumeration aus) — und den Stick bevorzugt **direkt am Gerät** einstecken statt
+in der Dock: Docks (v. a. USB-C/Thunderbolt) initialisieren sich beim Boot selbst
+erst spät.
+
 ---
 
 ## 7. Sicherheits- und Secrets-Policy
@@ -629,11 +637,14 @@ folgt zwingend:
 Die folgenden Punkte sind **nur auf echter Hardware** prüfbar und vor dem breiten
 Flotteneinsatz auf einem Testgerät (GroupTag `SLGTEST`) abzuhaken:
 
-- [ ] **OOBE-Autostart (v1.2.0):** Konsole erscheint sichtbar während „Geräte
-      werden vorbereitet"; Passphrase-Eingabe funktioniert dort; nach der
-      Zuweisung fährt das Setup ohne Neustart in die OOBE → Autopilot. Falls die
-      Konsole NICHT sichtbar ist: `Oobe.AutoLaunch` auf `false` und Fallback
-      Shift+F10 nutzen — bitte melden.
+- [x] **OOBE-Autostart (v1.2.0): BESTÄTIGT** (Feldtest 2026-08-21, 3× Dell
+      Pro 13 Plus): Konsole erscheint sichtbar während „Geräte werden
+      vorbereitet", Passphrase-Eingabe und Tastatur-Fix (de-DE) funktionieren,
+      Techniker/GroupTag werden automatisch übernommen.
+- [ ] **Hash-Upload nativ per Graph-REST (v1.2.2):** Import-Status erreicht
+      `complete`, danach greift das Zuweisungs-Polling und das Setup fährt ohne
+      Neustart in die OOBE → Autopilot. (Der frühere PSGallery-Weg schlug in
+      der Specialize-Phase unter SYSTEM immer fehl — siehe CHANGELOG 1.2.2.)
 - [ ] **Auto-Abnahme (v1.2.0):** geplante Aufgabe feuert nach der Anmeldung
       (Verzögerung beachten), Bedingungs-Checks greifen (defaultuser0/IME/Stick),
       Report entsteht, Aufgabe entfernt sich nach bestandener Abnahme

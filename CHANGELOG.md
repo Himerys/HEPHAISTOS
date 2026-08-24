@@ -1,5 +1,84 @@
 # CHANGELOG
 
+## 1.2.3 (2026-08-24) — Stick-Warteschleife nach dem Neustart
+
+### Behoben
+
+- **Stick wurde nach dem Neustart nicht erkannt und musste ab-/angesteckt
+  werden** (Feldtest): Die Specialize-Konsole startet sehr früh im Boot — der
+  USB-Stack ist zu diesem Zeitpunkt oft noch nicht fertig initialisiert und
+  das Stick-Volume noch nicht gemountet. Die OOBE-Phase hat den Stick aber nur
+  **genau einmal** beim Start gesucht. Jetzt wartet sie bei fehlendem Stick
+  **bis zu 90 Sekunden aktiv** (Suche alle 3 s, mit sichtbarem Hinweis inkl.
+  Ab-/Anstecken-Tipp) und läuft sofort weiter, sobald der Stick auftaucht —
+  ist er direkt da, kostet die Schleife nichts. Nach Ablauf der 90 s greift
+  unverändert der bisherige Ohne-Stick-Pfad (gelbe Warnung, Schritte melden
+  fehlende CCTK-Tools/Secrets einzeln).
+- Doku: Troubleshooting 6.8 ergänzt (Warteschleife, Neu-Enumeration durch
+  Ab-/Anstecken, Empfehlung: Stick direkt am Gerät statt in der Dock — Docks
+  initialisieren sich beim Boot selbst erst spät).
+
+## 1.2.2 (2026-08-21) — Hash-Upload nativ per Graph-REST (Specialize-Fix)
+
+### Behoben
+
+- **Autopilot-Hash-Upload schlug in der Specialize-Phase immer fehl**
+  (Feldtest 2026-08-21, 3× Dell Pro 13 Plus, Dock/Ethernet — identisches Bild
+  auf allen drei Geräten): Der Upload lief bis dahin über das
+  PSGallery-Script `Get-WindowsAutopilotInfo` (1:1-Port aus Rev05,
+  `Install-Script` zur Laufzeit). Unter SYSTEM ohne Benutzerprofil lässt sich
+  PowerShellGet aber nicht laden — im Log als
+  `TerminatingError(Join-Path): NULL` gefolgt von `Get-PSRepository: Modul
+  konnte nicht geladen werden` sichtbar. Export, GroupTag, Passphrase und
+  Webhook-Cache liefen durch; nur der Upload starb, das Setup lief (gewollt
+  crash-sicher) ohne Profilzuweisung in die OOBE weiter.
+- **Fix: Der Upload läuft mit App-Auth jetzt nativ über die Graph-API** —
+  POST auf `beta/deviceManagement/importedWindowsAutopilotDeviceIdentities`
+  (Serial, GroupTag, Hardware-Hash aus WMI unverändert als Base64), danach
+  Import-Status-Polling (alle 15 s, max. 20 Minuten; eine 401-Token-Erneuerung
+  wie beim Zuweisungs-Polling). `deviceErrorCode 806 / ZtdDeviceAlreadyAssigned`
+  wird als „bereits registriert" = Erfolg gewertet. Das ist intern derselbe
+  Weg, den `Get-WindowsAutopilotInfo -Online` nimmt — nur ohne
+  PSGallery/PowerShellGet/NuGet-Bootstrap, damit SYSTEM-/Specialize-tauglich.
+  Gleiche App-Berechtigung wie bisher (`DeviceManagementServiceConfig.ReadWrite.All`),
+  am Secrets-Blob ändert sich nichts. Anschließend unverändert das bestehende
+  Profilzuweisungs-Polling + Weiterlauf ins Provisioning.
+- Interaktiver Fallback ohne App-Zugang (Microsoft-Anmeldung) bleibt als
+  PSGallery-Weg erhalten, aber gehärtet: `Enable-Tls12AndGallery` beendet den
+  Aufrufer nicht mehr hart, wenn PowerShellGet nicht ladbar ist, und ein
+  Null-Guard ersetzt den kryptischen `Join-Path`-Bindungsfehler durch eine
+  klare Meldung.
+
+### Feldtest-Bestätigungen (aus demselben Log)
+
+- Specialize-Autostart: Konsole erscheint, Passphrase-Eingabe funktioniert,
+  Tastatur-Fix (de-DE) greift, Techniker + GroupTag werden automatisch
+  übernommen, Auto-Abnahme-Aufgabe wird registriert. ✔
+- v1.2.1-Webhook-Cache: „Teams-Webhook für die Auto-Abnahme hinterlegt
+  (DPAPI)" auf echter Hardware. ✔ (Roundtrip beim Abnahme-Lauf weiter offen.)
+- Modell-Mapping: Praxis-Modellname „Dell Pro 13 Plus PB13250" matcht den
+  Mapping-Schlüssel „Pro 13 Plus"; Fallback aufs Standard-Paket griff korrekt,
+  weil der Ordner `CCTK-Pro13Plus` auf dem Test-Stick fehlte (Stick-Inhalt,
+  kein Code-Fehler).
+
+### Review-Härtung (adversarial Review vor Release)
+
+- **Graph-Fehlerdetails sichtbar:** Schlägt der Import-POST fehl (400/403/
+  Throttling), zeigt die Fehlermeldung zusätzlich die `error.message` aus dem
+  OData-Response-Body — unter PS 5.1 enthält `Exception.Message` sonst nur den
+  nackten HTTP-Status, die eigentliche Ursache (fehlende Berechtigung,
+  ungültiger Hash, ...) bliebe unsichtbar.
+- **Import-Polling-Fenster 20 statt 15 Minuten:** Microsofts dokumentierter
+  Worst Case für den Autopilot-Import ist „bis zu 15 Minuten" — das Fenster
+  endete exakt dort und hätte einen langsamen, aber erfolgreichen Import als
+  Fehler gewertet.
+
+### Hardware-offen
+
+- Nativer Graph-Import gegen den echten Tenant (Import-Status bis `complete`,
+  danach Profilzuweisung) — auf den drei wartenden Geräten direkt per
+  Shift+F10 → `c:\o.cmd` nachholbar, sobald diese Version auf `main` liegt.
+
 ## 1.2.1 (2026-08-21) — Teams-Karte in der Auto-Abnahme (ohne Passphrase)
 
 ### Neu

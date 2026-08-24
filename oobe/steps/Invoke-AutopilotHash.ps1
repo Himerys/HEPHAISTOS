@@ -9,8 +9,10 @@
            lesen und als Intune-Import-CSV auf den Stick schreiben (<Stick>:\HWID\<Serial>.csv).
            Kein Internet und keine Script-Gallery nötig - die CSV ist das Backup.
         2) Group Tag wählen; Tag fließt direkt in die CSV (kein manuelles Nachtragen mehr).
-        3) Online-Upload nach Intune via Get-WindowsAutopilotInfo: bevorzugt App-Auth aus
-           dem verschlüsselten Secrets-Blob, interaktive Microsoft-Anmeldung nur als
+        3) Online-Upload nach Intune: mit App-Auth aus dem verschlüsselten Secrets-Blob
+           nativ per Graph-REST (importedWindowsAutopilotDeviceIdentities, KEINE
+           PSGallery-Abhängigkeit - läuft damit auch als SYSTEM in der Specialize-Phase);
+           interaktive Microsoft-Anmeldung (Get-WindowsAutopilotInfo) nur als
            expliziter Fallback auf Techniker-Wunsch.
         4) NEU (Handoff Abschnitt 4.6): Nach erfolgreichem Upload wird die Autopilot-Profilzuweisung
            per Graph gepollt (alle 30 s, max. 60 Abfragen = 30 Minuten). Sobald zugewiesen:
@@ -18,7 +20,7 @@
            Timeout: gelber Hinweis auf die GroupTag-Gruppenzuordnung, KEIN Neustart.
     Erwartet die geladene HEPHAISTOS-Bibliothek (lib\Hephaistos.Common.ps1) im Scope.
 .NOTES
-    HEPHAISTOS v1.2.1 - portiert aus USB_ScriptTool Rev05
+    HEPHAISTOS v1.2.3 - portiert aus USB_ScriptTool Rev05
     (SLG-Onboarding.ps1 / Invoke-Step3Hash + Scripts\Export-AutopilotHash.ps1 Rev02).
     Benötigt PowerShell 5.1 (OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM gespeichert
     (Pflicht für PS 5.1 + Umlaute).
@@ -244,42 +246,153 @@ if ($secrets) {
     }
 }
 
-# ============================================================ 5) Online-Upload via Get-WindowsAutopilotInfo
-# Port aus Invoke-Step3Hash: Script aus der PSGallery installieren und mit
-# App-Auth (bzw. interaktiv) aufrufen.
+# ============================================================ 5) Online-Upload nach Intune
+# NEU (v1.2.2): Mit App-Auth läuft der Upload nativ über die Graph-API
+# (importedWindowsAutopilotDeviceIdentities) statt über das PSGallery-Script
+# Get-WindowsAutopilotInfo. Feldtest 2026-08-21 (3x Dell Pro 13 Plus,
+# Specialize-Phase): Unter SYSTEM ohne Benutzerprofil lässt sich PowerShellGet
+# nicht laden (Get-PSRepository: "Modul konnte nicht geladen werden") - der
+# Upload schlug dort deshalb IMMER fehl. Der REST-Import braucht keinerlei
+# Module und nutzt denselben App-Zugang mit derselben Berechtigung
+# (DeviceManagementServiceConfig.ReadWrite.All) wie das bisherige Script.
 if ($alreadyRegistered) {
     Write-HephResult -Success $true -Text 'Autopilot-Hash: bereits registriert - Upload übersprungen.'
-} else {
-try {
-    Enable-Tls12AndGallery
-    if (-not (Get-InstalledScript -Name Get-WindowsAutopilotInfo -ErrorAction SilentlyContinue)) {
-        Write-HephDim 'get-windowsautopilotinfo wird aus der PSGallery installiert ...'
-        Install-Script -Name Get-WindowsAutopilotInfo -Force -Scope CurrentUser
-    }
-    $apScript = (Get-InstalledScript -Name Get-WindowsAutopilotInfo).InstalledLocation
-    $apScript = Join-Path $apScript 'Get-WindowsAutopilotInfo.ps1'
-    cmd /c exit 0   # $LASTEXITCODE zurücksetzen (Fremdscript ruft exit nur im Fehlerfall)
-    if ($secrets) {
+} elseif ($secrets) {
+    try {
         Write-HephInfo 'Upload mit gespeichertem Graph-Zugang (App-Auth, keine Anmeldung nötig) ...'
-        & $apScript -Online -GroupTag $tag -TenantId $secrets.TenantId -AppId $secrets.AppId -AppSecret $secrets.AppSecret
-    } else {
+        $impUri   = 'https://graph.microsoft.com/beta/deviceManagement/importedWindowsAutopilotDeviceIdentities'
+        $impToken = Get-GraphAppToken -Cfg $secrets
+        # hardwareIdentifier ist Edm.Binary: DeviceHardwareData aus WMI ist bereits
+        # der passende Base64-String und wird unverändert übergeben.
+        $impBody = @{
+            '@odata.type'             = '#microsoft.graph.importedWindowsAutopilotDeviceIdentity'
+            serialNumber              = $csvSerial
+            groupTag                  = $tag
+            productKey                = ''
+            hardwareIdentifier        = $hash
+            assignedUserPrincipalName = ''
+            state = @{
+                '@odata.type'        = 'microsoft.graph.importedWindowsAutopilotDeviceIdentityState'
+                deviceImportStatus   = 'pending'
+                deviceRegistrationId = ''
+                deviceErrorCode      = 0
+                deviceErrorName      = ''
+            }
+        } | ConvertTo-Json -Depth 4
+        $impDev = Invoke-RestMethod -Method POST -Uri $impUri `
+                      -Headers @{ Authorization = "Bearer $impToken" } `
+                      -ContentType 'application/json; charset=utf-8' -Body $impBody
+        Write-HephDim ('  Import angenommen (Id {0}) - Intune verarbeitet den Import asynchron ...' -f $impDev.id)
+
+        # Import-Status pollen (alle 15 s, max. 80 = 20 Minuten; typisch 1-10 min,
+        # Microsofts dokumentierter Worst Case ist 15 min - das Fenster liegt
+        # bewusst DARÜBER, damit ein langsamer Import nicht als Fehler endet).
+        # Terminal: complete = ok; error/failed mit deviceErrorCode 806
+        # (ZtdDeviceAlreadyAssigned) = Gerät war schon registriert = ebenfalls ok.
+        $impStatus = 'unknown'; $impErrCode = 0; $impErrName = ''
+        $impRenewed = $false
+        for ($p = 1; $p -le 80; $p++) {
+            Start-Sleep -Seconds 15
+            try {
+                $impState = Invoke-RestMethod -Method GET -Uri ('{0}/{1}' -f $impUri, $impDev.id) `
+                                -Headers @{ Authorization = "Bearer $impToken" }
+            } catch {
+                $impResp = $_.Exception.Response
+                if (-not $impRenewed -and $impResp -and [int]$impResp.StatusCode -eq 401) {
+                    # Token läuft nach ~60 min ab - hier reicht EINE Erneuerung.
+                    $impRenewed = $true
+                    $impToken = Get-GraphAppToken -Cfg $secrets
+                    Write-HephDim '  Graph-Token erneuert (401) - Abfrage läuft weiter.'
+                    continue
+                }
+                Write-HephDim ('  Status-Abfrage fehlgeschlagen ({0}) - nächster Versuch in 15 s.' -f $_.Exception.Message)
+                continue
+            }
+            if ($impState.state) {
+                $impStatus  = [string]$impState.state.deviceImportStatus
+                $impErrCode = [int]$impState.state.deviceErrorCode
+                $impErrName = [string]$impState.state.deviceErrorName
+            }
+            if ($impStatus -in @('complete','error','failed')) { break }
+            if (($p % 4) -eq 0) { Write-HephDim ('  ... Import-Status nach {0} min: {1}' -f ($p / 4), $impStatus) }
+        }
+
+        if ($impStatus -eq 'complete') {
+            Set-Step -StateDir $stateDir -Name 'step3_hash.done' -Detail ("Online-Upload nach Intune (Graph-REST), GroupTag={0}" -f $tag)
+            Write-HephOk 'Hash ERFOLGREICH nach Intune hochgeladen.'
+            Write-HephDim 'Hinweis: Autopilot-Profilzuweisung kann einige Minuten dauern.'
+        } elseif ($impErrCode -eq 806 -or $impErrName -eq 'ZtdDeviceAlreadyAssigned') {
+            Set-Step -StateDir $stateDir -Name 'step3_hash.done' -Detail ("Bereits in Autopilot registriert (Import-Antwort 806), GroupTag={0}" -f $tag)
+            Write-HephOk 'Gerät war bereits in Autopilot registriert (Import-Antwort 806) - kein erneuter Upload nötig.'
+        } elseif ($impStatus -in @('error','failed')) {
+            throw ('Intune meldet Import-Fehler: {0} (Code {1})' -f $(if ($impErrName) { $impErrName } else { $impStatus }), $impErrCode)
+        } else {
+            throw ('Import nach 20 Minuten nicht abgeschlossen (letzter Status: {0}) - im Intune-Portal prüfen.' -f $impStatus)
+        }
+    } catch {
+        # Graph legt die eigentliche Ursache (z.B. fehlende Berechtigung,
+        # ungültiger hardwareIdentifier, Throttling) als OData-JSON in den
+        # Response-Body - unter PS 5.1 steht in Exception.Message nur der nackte
+        # HTTP-Status. Body deshalb best effort mit anzeigen.
+        $impErrMsg = $_.Exception.Message
+        try {
+            if ($_.Exception.Response) {
+                $impErrStream = $_.Exception.Response.GetResponseStream()
+                if ($impErrStream) {
+                    $impErrBody = (New-Object IO.StreamReader($impErrStream)).ReadToEnd()
+                    $impErrJson = $null
+                    if ($impErrBody) { try { $impErrJson = $impErrBody | ConvertFrom-Json } catch { } }
+                    if ($impErrJson -and $impErrJson.error -and $impErrJson.error.message) {
+                        $impErrMsg = ('{0} | Graph: {1}' -f $impErrMsg, $impErrJson.error.message)
+                    } elseif ($impErrBody -and $impErrBody.Length -le 300) {
+                        $impErrMsg = ('{0} | Graph: {1}' -f $impErrMsg, $impErrBody)
+                    }
+                }
+            }
+        } catch { }
+        Write-HephErr  ("Online-Upload fehlgeschlagen: {0}" -f $impErrMsg)
+        Write-HephWarn 'Offline-CSV ist gesichert; Upload später manuell durchführen.'
+        Set-Step -StateDir $stateDir -Name 'step3_hash.done' -Detail ("Offline-CSV (Online fehlgeschlagen), GroupTag={0}" -f $tag)
+        Write-HephResult -Success $false -Text 'Autopilot-Hash: Online-Upload fehlgeschlagen (CSV gesichert).'
+        return
+    }
+    Write-HephResult -Success $true -Text 'Autopilot-Hash: Upload nach Intune abgeschlossen.'
+} else {
+    # Interaktiver Fallback ohne App-Zugang: Original-Weg über die PSGallery
+    # (Get-WindowsAutopilotInfo mit Microsoft-Anmeldung). Nur in einer echten
+    # interaktiven Sitzung sinnvoll - in der Specialize-Phase (SYSTEM) ist
+    # PowerShellGet nicht ladbar; dorthin führt dieser Zweig aber nur nach
+    # der bestätigten Rückfrage oben.
+    try {
+        Enable-Tls12AndGallery
+        if (-not (Get-InstalledScript -Name Get-WindowsAutopilotInfo -ErrorAction SilentlyContinue)) {
+            Write-HephDim 'get-windowsautopilotinfo wird aus der PSGallery installiert ...'
+            Install-Script -Name Get-WindowsAutopilotInfo -Force -Scope CurrentUser
+        }
+        $apDir = (Get-InstalledScript -Name Get-WindowsAutopilotInfo -ErrorAction SilentlyContinue).InstalledLocation
+        if (-not $apDir) {
+            # Ohne den Guard liefe Join-Path mit $null auf einen kryptischen
+            # Bindungsfehler (Feldtest 2026-08-21) - klare Meldung stattdessen.
+            throw 'Get-WindowsAutopilotInfo ist nicht verfügbar (PowerShellGet/PSGallery in dieser Sitzung nicht nutzbar).'
+        }
+        $apScript = Join-Path $apDir 'Get-WindowsAutopilotInfo.ps1'
+        cmd /c exit 0   # $LASTEXITCODE zurücksetzen (Fremdscript ruft exit nur im Fehlerfall)
         Write-Host ''
         Write-HephInfo 'Es folgt eine Microsoft-Anmeldung. Mit einem Account mit Intune-'
         Write-HephInfo 'Berechtigung anmelden (Autopilot-Import).'
         & $apScript -Online -GroupTag $tag
+        if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw "Exit-Code $LASTEXITCODE" }
+        Set-Step -StateDir $stateDir -Name 'step3_hash.done' -Detail ("Online-Upload nach Intune (interaktiv), GroupTag={0}" -f $tag)
+        Write-HephOk 'Hash ERFOLGREICH nach Intune hochgeladen.'
+        Write-HephDim 'Hinweis: Autopilot-Profilzuweisung kann einige Minuten dauern.'
+    } catch {
+        Write-HephErr  ("Online-Upload fehlgeschlagen: {0}" -f $_.Exception.Message)
+        Write-HephWarn 'Offline-CSV ist gesichert; Upload später manuell durchführen.'
+        Set-Step -StateDir $stateDir -Name 'step3_hash.done' -Detail ("Offline-CSV (Online fehlgeschlagen), GroupTag={0}" -f $tag)
+        Write-HephResult -Success $false -Text 'Autopilot-Hash: Online-Upload fehlgeschlagen (CSV gesichert).'
+        return
     }
-    if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw "Exit-Code $LASTEXITCODE" }
-    Set-Step -StateDir $stateDir -Name 'step3_hash.done' -Detail ("Online-Upload nach Intune, GroupTag={0}" -f $tag)
-    Write-HephOk 'Hash ERFOLGREICH nach Intune hochgeladen.'
-    Write-HephDim 'Hinweis: Autopilot-Profilzuweisung kann einige Minuten dauern.'
-} catch {
-    Write-HephErr  ("Online-Upload fehlgeschlagen: {0}" -f $_.Exception.Message)
-    Write-HephWarn 'Offline-CSV ist gesichert; Upload später manuell durchführen.'
-    Set-Step -StateDir $stateDir -Name 'step3_hash.done' -Detail ("Offline-CSV (Online fehlgeschlagen), GroupTag={0}" -f $tag)
-    Write-HephResult -Success $false -Text 'Autopilot-Hash: Online-Upload fehlgeschlagen (CSV gesichert).'
-    return
-}
-Write-HephResult -Success $true -Text 'Autopilot-Hash: Upload nach Intune abgeschlossen.'
+    Write-HephResult -Success $true -Text 'Autopilot-Hash: Upload nach Intune abgeschlossen.'
 }
 
 # ============================================================ 6) NEU: Profilzuweisung pollen + Auto-Reboot (Handoff 4.6)

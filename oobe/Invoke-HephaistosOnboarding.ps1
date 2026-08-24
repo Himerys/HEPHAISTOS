@@ -14,7 +14,7 @@
            (bei zugewiesenem Profil: automatischer Neustart in das Provisioning)
     Status pro Gerät: <Stick>:\Logs\<ServiceTag>\state\*.done
 .NOTES
-    HEPHAISTOS v1.2.1 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
+    HEPHAISTOS v1.2.3 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
     Benötigt PowerShell 5.1 (OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM gespeichert
     (Pflicht für PS 5.1 + Umlaute).
 #>
@@ -25,7 +25,7 @@ $Check = [char]0x2713   # Haken-Symbol, zur Laufzeit erzeugt (ASCII-sichere Quel
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.2.1'
+$Script:HephVersion = '1.2.3'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots dieser Phase (OOBE): zuerst die gestagte Kopie auf C:, dann der
 # Stick. Der Stick wird hier per Minimal-Suche gefunden (DriveInfo-Schleife nach
@@ -115,6 +115,22 @@ try {
 # Der Stick bleibt während des gesamten Ablaufs eingesteckt: dort liegen die
 # CCTK-Tools, der Secrets-Blob und der sichtbare Geräteordner (Logs\<Serial>).
 $UsbRoot = Find-HephaistosUsb
+# v1.2.3: Die Specialize-Konsole startet sehr früh im Boot - der USB-Stack ist
+# dann oft noch nicht fertig und das Stick-Volume noch nicht gemountet
+# (Feldtest 2026-08: Stick musste ab-/angesteckt werden). Deshalb bis zu 90 s
+# aktiv nachsuchen statt einmal zu prüfen; sobald gefunden, geht es sofort
+# weiter (kein Zeitverlust, wenn der Stick direkt da ist).
+if (-not $UsbRoot) {
+    Write-HephWarn 'Stick noch nicht gefunden - die USB-Initialisierung nach dem Neustart kann etwas dauern.'
+    Write-HephInfo 'Warte bis zu 90 Sekunden auf den Stick (falls er nicht auftaucht: kurz ab- und wieder anstecken) ...'
+    $stickWait = [Diagnostics.Stopwatch]::StartNew()
+    while (-not $UsbRoot -and $stickWait.Elapsed.TotalSeconds -lt 90) {
+        Start-Sleep -Seconds 3
+        $UsbRoot = Find-HephaistosUsb
+    }
+    $stickWait.Stop()
+    if ($UsbRoot) { Write-HephOk ('Stick nach {0:N0} Sekunden gefunden.' -f $stickWait.Elapsed.TotalSeconds) }
+}
 if ($UsbRoot) {
     Write-HephDim ("USB-Stick gefunden: {0}" -f $UsbRoot)
     $stickFallback = Join-Path $UsbRoot '_HEPHAISTOS\Fallback'

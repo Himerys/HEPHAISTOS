@@ -16,7 +16,7 @@
     Bewusst OHNE Lib-Abhängigkeit (selbsttragend), damit die Aufgabe auch bei
     Repo-/Stick-Problemen nie crasht, sondern nur protokolliert und wartet.
 .NOTES
-    HEPHAISTOS v1.2.1. PowerShell 5.1. UTF-8 mit BOM.
+    HEPHAISTOS v1.2.3. PowerShell 5.1. UTF-8 mit BOM.
 #>
 $ErrorActionPreference = 'Stop'
 $TaskName = 'HEPHAISTOS-AutoAbnahme'
