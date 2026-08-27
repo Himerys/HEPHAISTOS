@@ -13,7 +13,7 @@
     Benötigt die geladene Lib (Test-HephInternet, Get-GraphAppToken,
     Enable-Tls12AndGallery).
 .NOTES
-    HEPHAISTOS v1.2.3 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
+    HEPHAISTOS v1.2.4 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
     Benötigt PowerShell 5.1. Datei ist UTF-8 MIT BOM gespeichert (Pflicht für PS 5.1 + Umlaute).
 #>
 

@@ -1,6 +1,6 @@
 # HEPHAISTOS — Techniker-Anleitung
 
-**SLG Notebook-Onboarding (HEPHAISTOS) v1.2.3** — portiert und korrigiert aus dem
+**SLG Notebook-Onboarding (HEPHAISTOS) v1.2.4** — portiert und korrigiert aus dem
 USB_ScriptTool (Rev03–Rev05). Diese Anleitung beschreibt den **neuen** Ablauf:
 kompletter Disk-Wipe via OSDCloud, Neuaufbau nach Vorlage, alle Scripts kommen zur
 Laufzeit aus dem GitHub-Repo. Der USB-Stick ist statisch und wartungsfrei.
@@ -166,9 +166,13 @@ Build-USB listet die konfigurierten Ordner in der Abschluss-Checkliste.
 der **WinPE-Phase vor der Installation** geprüft und bei Bedarf umgestellt —
 ein Wechsel RAID→AHCI *nach* der Installation würde Windows nicht mehr booten
 lassen. Steht das Werksgerät auf RAID, leert HEPHAISTOS die Disk, stellt um und
-startet neu (die leere Disk bootet automatisch wieder vom Stick); der zweite
-Durchlauf installiert dann direkt unter AHCI. `"StorageMode": "Keep"` schaltet
-den Preflight ab.
+startet neu; der zweite Durchlauf installiert dann direkt unter AHCI. Seit
+v1.2.4 setzt das Script vor diesem Neustart einen **einmaligen UEFI-Boot-Override
+(`BootNext`)** auf den Stick — das Gerät startet damit auch dann direkt wieder
+vom Stick, wenn in der Boot-Reihenfolge z. B. HTTP-Boot an erster Stelle steht
+(die dauerhafte Reihenfolge bleibt unverändert). Schlägt der Override fehl,
+erscheint ein gelber Hinweis: dann wie früher F12 → USB-Stick wählen.
+`"StorageMode": "Keep"` schaltet den Preflight ab.
 
 ### 2.6 Erstverifikation
 
@@ -200,10 +204,12 @@ Der Stick bleibt während **aller** Phasen eingesteckt (Logs, State, CCTK, Secre
    das Gerät in der WinPE-Konsole.
 7. **Storage-Modus-Preflight** (ab v1.1.0, nur beim ersten Durchlauf): Steht das
    Werks-BIOS auf RAID, leert das Script die Disk, stellt auf AHCI um und startet
-   neu — das Gerät bootet **automatisch wieder vom Stick** (leere Disk), Name/
-   Sprache, Tag und die `LOESCHEN`-Bestätigung kurz erneut eingeben, dann geht es
-   direkt weiter. Kein Fehler,
-   erwartetes Verhalten.
+   neu — das Gerät bootet **automatisch wieder vom Stick** (seit v1.2.4 per
+   einmaligem UEFI-Boot-Override `BootNext`, unabhängig von der
+   Boot-Reihenfolge). Name/Sprache, Tag und die `LOESCHEN`-Bestätigung kurz
+   erneut eingeben, dann geht es direkt weiter. Kein Fehler, erwartetes
+   Verhalten. Startet das Gerät doch woanders (z. B. HTTP-Boot): F12 →
+   USB-Stick wählen.
 8. Danach läuft alles automatisch: `Start-OSDCloud -ZTI` löscht die interne Disk und
    installiert **Windows 11 25H2** in der gewählten Sprache (ESD-Download, je nach
    Netz ca. 20–40 Minuten). Anschließend staged das Script `C:\OSDCloud\HEPHAISTOS\`
@@ -652,6 +658,11 @@ Flotteneinsatz auf einem Testgerät (GroupTag `SLGTEST`) abzuhaken:
 - [ ] **Storage-Preflight (v1.1.0):** auf einem RAID-Werksgerät den kompletten
       Zyklus prüfen (Disk leeren → AHCI → automatischer Stick-Boot → Installation)
       inkl. `cctk --embsataraid`-Ausgabeformat.
+- [ ] **UEFI-Boot-Override (v1.2.4):** Nach der RAID→AHCI-Umstellung startet das
+      Gerät ohne F12 direkt wieder vom Stick (Konsole meldet vorher „Boot-Override
+      gesetzt (BootNext)"); die dauerhafte Boot-Reihenfolge im BIOS bleibt
+      unverändert. (Feldtest davor: HTTP-Boot an erster Stelle fing den Neustart
+      ab.)
 
 - [ ] **CCTK auf Dell Pro 16 Plus:** vorentpacktes Paket (`applyconfig.bat`) und
       SCE-Fallback inkl. VC++-Workaround anwenden, Exit-Code 0, BIOS-Einstellungen

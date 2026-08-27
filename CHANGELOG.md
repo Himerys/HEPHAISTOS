@@ -1,5 +1,41 @@
 # CHANGELOG
 
+## 1.2.4 (2026-08-27) — UEFI-Boot-Override nach der RAID→AHCI-Umstellung
+
+### Behoben
+
+- **Nach dem Preflight-Neustart (RAID→AHCI) startete das Gerät nicht vom
+  Stick, sondern im HTTP-Boot** (Feldtest: HTTP-Boot steht in der
+  Werks-Boot-Reihenfolge vor USB — der Techniker musste per F12 erneut den
+  Stick wählen). Die bisherige Annahme „leere Disk → Firmware fällt auf den
+  Stick durch" gilt nur, wenn kein anderer Boot-Eintrag vorher greift.
+- **Fix: Einmaliger UEFI-Boot-Override.** Neue Lib-Funktion
+  `Set-HephBootNextToCurrent`: liest die UEFI-Variable `BootCurrent` (der
+  Eintrag, von dem das laufende WinPE gebootet wurde = der Stick) und kopiert
+  sie nach `BootNext` — der nächste Start geht damit garantiert wieder auf den
+  Stick, unabhängig von der Boot-Reihenfolge. `BootNext` gilt genau einmal und
+  wird von der Firmware danach automatisch gelöscht; die **dauerhafte
+  Boot-Reihenfolge bleibt unangetastet** (kein „USB immer zuerst"-Risiko für
+  die Flotte). Technisch: Win32 `Get/SetFirmwareEnvironmentVariableW` im
+  EFI-Global-Namespace, inkl. Aktivierung des dafür nötigen Privilegs
+  `SeSystemEnvironmentPrivilege` (Add-Type/P-Invoke, PS-5.1-tauglich).
+- Eingebaut an allen drei Preflight-Neustarts (automatischer
+  Umstell-Zyklus + die beiden Abbruch-Neustarts, nach denen es ebenfalls
+  zurück auf den Stick geht). Schlägt der Override fehl (kein UEFI,
+  Firmware-Variablen nicht erreichbar), erscheint ein gelber Hinweis und es
+  gilt der bisherige Weg: F12 → USB-Stick. Der Neustart nach der
+  Installation (→ Windows/Specialize) bleibt bewusst unangetastet.
+- Doku: Kapitel 2.5/3.1 (Ablaufbeschreibung) und 8 (neuer Hardware-Check)
+  aktualisiert.
+
+### Hinweis für die Flotte
+
+- Die HTTP-Boot-Einträge selbst bleiben bestehen (sie stören nur diesen einen
+  automatischen Neustart). Wer sie generell loswerden will, kann HTTPs-Boot im
+  CCTK-Paket deaktivieren — das beschleunigt jeden Boot, ist aber eine
+  Paket-Entscheidung (betrifft die ganze Flotte) und bewusst nicht Teil dieses
+  Fixes.
+
 ## 1.2.3 (2026-08-24) — Stick-Warteschleife nach dem Neustart
 
 ### Behoben

@@ -15,7 +15,7 @@
         [7] Neustart via wpeutil reboot (10-Sekunden-Countdown)
     Status pro Gerät: <Stick>\Logs\<ServiceTag>\state\*.done (Flag-Namen wie im Original).
 .NOTES
-    HEPHAISTOS v1.2.3 - portiert aus USB_ScriptTool Rev05 (START-ONBOARDING.cmd +
+    HEPHAISTOS v1.2.4 - portiert aus USB_ScriptTool Rev05 (START-ONBOARDING.cmd +
     SLG-Onboarding.ps1). PowerShell 5.1. UTF-8 mit BOM (Pflicht für PS 5.1 + Umlaute).
     Bugfix (Handoff 7.1): step2_osinstall.started wird ERST unmittelbar vor
     Start-OSDCloud geschrieben - nicht schon bei der Menüauswahl wie im alten
@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.2.3'
+$Script:HephVersion = '1.2.4'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots je Phase - Boot-Phase: <Stick>:\_HEPHAISTOS\Fallback. Die Lib selbst
 # kann vom Stick kommen, deshalb Minimal-Stick-Suche VOR dem Lib-Load (DriveInfo-
@@ -462,6 +462,11 @@ if ($storageTarget -and ($storageTarget -notin @('Keep','None',''))) {
                     # ein Wechsel NACH der Installation macht Windows unbootbar.
                     try { Set-Step -StateDir $StateDir -Name 'storage_mode.keep' -Detail ('installiert unter {0}, Ziel war {1}' -f $cur, $storageTarget) } catch { }
                 } else {
+                    # Nach diesem Abbruch geht es typischerweise zurück auf den Stick
+                    # (BIOS prüfen, neuer Versuch) - Einmal-Override best effort.
+                    if (Get-Command Set-HephBootNextToCurrent -ErrorAction SilentlyContinue) {
+                        if (Set-HephBootNextToCurrent) { Write-HephDim 'Boot-Override gesetzt (BootNext): nächster Start wieder vom Stick.' }
+                    }
                     Invoke-HephReboot -ExitCode 1
                 }
             } else {
@@ -492,6 +497,14 @@ if ($storageTarget -and ($storageTarget -notin @('Keep','None',''))) {
                 try { $setOut = (cmd /c ('"{0}" --embsataraid={1} 2>&1' -f $cctkExe.FullName, $storageTarget.ToLower())) | Out-String } catch { $setFailed = $true; $setOut = $_.Exception.Message }
                 if ((-not $setFailed) -and ($LASTEXITCODE -eq 0)) {
                     Write-HephOk ('Storage-Modus auf {0} gesetzt - Neustart, danach läuft die Installation normal weiter.' -f $storageTarget)
+                    # v1.2.4: Einmal-Override auf den Stick - sonst greift nach dem
+                    # Neustart die normale Boot-Reihenfolge (Feldtest: HTTP-Boot an
+                    # erster Stelle -> Gerät startete NICHT vom Stick, F12 nötig).
+                    if ((Get-Command Set-HephBootNextToCurrent -ErrorAction SilentlyContinue) -and (Set-HephBootNextToCurrent)) {
+                        Write-HephOk 'Boot-Override gesetzt (BootNext): der nächste Start geht direkt wieder auf den Stick.'
+                    } else {
+                        Write-HephWarn 'Boot-Override (BootNext) nicht möglich - falls das Gerät nicht vom Stick startet: F12 -> USB-Stick wählen.'
+                    }
                     Invoke-HephReboot -CountdownSeconds 5
                 } else {
                     Write-HephErr ('Umstellen fehlgeschlagen: {0}' -f $setOut.Trim())
@@ -499,6 +512,10 @@ if ($storageTarget -and ($storageTarget -notin @('Keep','None',''))) {
                     if (Confirm-Choice ('Trotzdem unter "{0}" installieren? Der OOBE-BIOS-Schritt wendet das CCTK-Paket dann nur nach Rückfrage an.' -f $cur)) {
                         try { Set-Step -StateDir $StateDir -Name 'storage_mode.keep' -Detail ('installiert unter {0}, Umstellung fehlgeschlagen' -f $cur) } catch { }
                     } else {
+                        # Auch hier: nächster Halt ist wieder der Stick - Einmal-Override.
+                        if (Get-Command Set-HephBootNextToCurrent -ErrorAction SilentlyContinue) {
+                            if (Set-HephBootNextToCurrent) { Write-HephDim 'Boot-Override gesetzt (BootNext): nächster Start wieder vom Stick.' }
+                        }
                         Invoke-HephReboot -ExitCode 1
                     }
                 }
