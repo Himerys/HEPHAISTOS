@@ -14,7 +14,7 @@
            (bei zugewiesenem Profil: automatischer Neustart in das Provisioning)
     Status pro Gerät: <Stick>:\Logs\<ServiceTag>\state\*.done
 .NOTES
-    HEPHAISTOS v1.2.4 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
+    HEPHAISTOS v1.3.0 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
     Benötigt PowerShell 5.1 (OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM gespeichert
     (Pflicht für PS 5.1 + Umlaute).
 #>
@@ -25,7 +25,7 @@ $Check = [char]0x2713   # Haken-Symbol, zur Laufzeit erzeugt (ASCII-sichere Quel
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.2.4'
+$Script:HephVersion = '1.3.0'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots dieser Phase (OOBE): zuerst die gestagte Kopie auf C:, dann der
 # Stick. Der Stick wird hier per Minimal-Suche gefunden (DriveInfo-Schleife nach

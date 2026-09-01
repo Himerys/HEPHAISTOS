@@ -16,7 +16,7 @@
     Nur Stick-Inhalte aktualisieren (ohne WinPE/USB neu zu bauen):
         ... -SkipUsbCreation
 .NOTES
-    HEPHAISTOS v1.2.4 - portiert/erweitert aus USB_ScriptTool Rev05 (Handoff §8).
+    HEPHAISTOS v1.3.0 - portiert/erweitert aus USB_ScriptTool Rev05 (Handoff §8).
     PowerShell 5.1. UTF-8 mit BOM.
 #>
 #Requires -RunAsAdministrator
@@ -28,7 +28,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Script:HephVersion = '1.2.4'
+$Script:HephVersion = '1.3.0'
 
 # --- Repo-Checkout + zentrale Config (RawBase kommt NUR aus deploy.json) ----
 $RepoRoot   = Split-Path -Parent $PSScriptRoot
@@ -135,7 +135,13 @@ if (-not $SkipUsbCreation) {
 
     # --- Schritt 3: Template + Workspace + WinPE + USB (Handoff §8) -----------
     Write-Host '==> OSDCloud-Template (einmalig, dauert einige Minuten)' -ForegroundColor Cyan
-    New-OSDCloudTemplate
+    # v1.3.0: -SetInputLocale de-de baut die DEUTSCHE Tastatur direkt ins WinPE
+    # (Y/Z-Falle bei Passphrase/LOESCHEN). Der Parameter existiert nur am
+    # Template, nicht an Edit-OSDCloudWinPE. Bestehende Sticks brauchen keinen
+    # Neubau: boot/Start-Hephaistos.ps1 stellt das Layout zur Laufzeit per
+    # wpeutil um (wirkt auf alle Sticks sofort); dieser Parameter macht es
+    # für neu gebaute Sticks nativ.
+    New-OSDCloudTemplate -SetInputLocale de-de
     Write-Host '==> OSDCloud-Workspace' -ForegroundColor Cyan
     New-OSDCloudWorkspace -WorkspacePath $WorkspacePath
     Write-Host '==> WinPE bauen (Dell- + WiFi-Treiber, StartURL -> boot/Start-Hephaistos.ps1)' -ForegroundColor Cyan

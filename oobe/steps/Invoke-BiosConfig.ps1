@@ -15,7 +15,7 @@
     Die CCTK-Binärdateien liegen bewusst NUR auf dem Stick (zu groß/lizenzpflichtig
     fürs Repo) - ohne Stick kann dieser Schritt nicht laufen.
 .NOTES
-    HEPHAISTOS v1.2.4 - portiert aus USB_ScriptTool Rev05. PowerShell 5.1. UTF-8 mit BOM.
+    HEPHAISTOS v1.3.0 - portiert aus USB_ScriptTool Rev05. PowerShell 5.1. UTF-8 mit BOM.
 #>
 param([hashtable]$Context)
 

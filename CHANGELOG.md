@@ -1,5 +1,111 @@
 # CHANGELOG
 
+## 1.3.0 (2026-09-01) — Ein Eingabeblock am Anfang: Passphrase-Handoff, Preflight-Wiederanlauf, deutsche WinPE-Tastatur
+
+Ziel dieses Releases: **alle Techniker-Eingaben an den Anfang ziehen.** Danach
+bleibt nur noch der von Microsoft vorgegebene Pre-Provisioning-Block
+(Windows-Taste ×5 … Reseal — per Doku nicht automatisierbar, Self-Deploying ist
+für Hybrid Join ausgeschlossen) und der Abnahme-Login. Design und Risiken wurden
+vor der Umsetzung von einer mehrstufigen Analyse + zwei adversarialen Reviews
+geprüft; alle Auflagen sind eingearbeitet.
+
+### Neu
+
+- **Team-Passphrase gleich am Anfang (WinPE) statt mitten im Setup** — mit
+  sofortiger Prüfung (Tippfehler fallen in Sekunde 30 auf, nicht in Minute 25).
+  Transport zur Specialize-Phase per **Split-Key-Handoff**: Die entsperrten
+  Upload-Felder (TenantId, AppId, AppSecret, TeamsWebhookUrl — bewusst NICHT
+  die Mail-Felder) werden mit einem zufälligen Einmal-Schlüssel AES-256-
+  verschlüsselt; **Ciphertext auf C:, Schlüssel auf dem Stick**. Jede Hälfte
+  allein ist kryptographisch wertlos. Die Specialize-Phase prüft Seriennummer
+  (live via WMI), Paarungs-Hash und TTL (24 h), entschlüsselt im Speicher und
+  **überschreibt + löscht beide Dateien sofort** — Erfolg wie Fehlschlag
+  (One-Shot). Neue Lib-Funktionen: `New-HephHandoffKey`, `Save-HephHandoff`,
+  `Restore-HephHandoff`, `Clear-HephHandoffKeys`, `Remove-HephSecureFile`
+  (Überschreiben vor dem Löschen). Konsum sitzt IN `Get-HephaistosSecrets`
+  (Review-Blocker: `$Script:`-Scope reicht nicht über die `&`-Grenze in die
+  Schritt-Scripts) und ist auf den OOBE-/Specialize-Kontext begrenzt —
+  Abnahme/Send behalten den Passphrase-Weg. Harte Regeln aus dem Review:
+  Handoff wird verweigert, wenn Schlüssel und Ciphertext auf demselben Medium
+  landen würden (Kein-Stick-Fallback!); halbe Paare werden entsorgt;
+  Sweeps beim WinPE-Start (eigene Serial immer, fremde nach TTL — Stick-
+  Wandern zwischen parallelen Geräten bleibt möglich) und in der Abnahme.
+  **Kein Gate:** 3× falsche Passphrase / kein Blob / kein Stick ⇒ Installation
+  läuft normal, die Specialize-Phase fragt wie bisher (voller Fallback).
+- **Preflight-Wiederanlauf ohne Neu-Eintippen:** Nach der automatischen
+  RAID→AHCI-Umstellung (Neustart) zeigt Lauf 2 eine Zusammenfassung (Gerät,
+  Techniker, Sprache, Tag) mit **15-s-Countdown** — nichts drücken heißt
+  weiterlaufen, jede Taste heißt normale Eingabe. Die gespeicherte Zustimmung
+  ist **einmalig** (wird beim Lesen sofort gelöscht), per Zufalls-Nonce an
+  GENAU diesen Umstell-Zyklus gebunden (Nonce steht auch im
+  `storage_mode.attempted`-Flag), wird nur akzeptiert, wenn Seriennummer +
+  Modell live per WMI passen (manuell eingetippte Seriennummern sind
+  ausgeschlossen) und wenn **alle internen Disks nachweislich leer** sind —
+  der Uhr wird bewusst nicht vertraut (bekannter WinPE-Skew), leeren Disks
+  schon. Geschrieben wird die Zustimmung ausschließlich im Erfolgszweig
+  unmittelbar vor dem Neustart, nie nach LOESCHEN selbst und nie in
+  Abbruchzweigen. Countdown fail-closed: jede Konsolen-Exception = interaktiv;
+  Puffer wird vorher nicht geleert (gepufferte Taste bricht ab = fail-safe).
+  Die Passphrase kommt im RAID-Fall erst in Lauf 2 dran (in Lauf 1 rebootet
+  das Gerät vor der Abfrage; sie wird bewusst nirgends persistiert) - Lauf 2
+  besteht damit aus genau einer Eingabe.
+- **Deutsche Tastatur schon in WinPE** (Y/Z-Falle bei Passphrase/LOESCHEN):
+  `boot/Start-Hephaistos.ps1` stellt zur Laufzeit per
+  `wpeutil SetKeyboardLayout 0407:00000407` um und startet die Konsole
+  einmalig neu (das Layout greift nur in neuen Fenstern; Guard per
+  Umgebungsvariable, Selbst-Kopie via Repo/Stick-Fallback). Wirkt auf **alle
+  existierenden Sticks sofort** (Script kommt live aus dem Repo). Zusätzlich
+  baut `tools/Build-USB.ps1` neue Templates mit `-SetInputLocale de-de`
+  (der Parameter existiert nur an `New-OSDCloudTemplate`, nicht an
+  `Edit-OSDCloudWinPE`).
+- **technician.txt jetzt auch in WinPE als Enter-Default:** Der in einem
+  früheren Lauf gespeicherte Techniker-Name wird beim erneuten Stick-Boot
+  vorgeschlagen (bisher las ihn nur die Abnahme).
+- **Neuer Config-Schalter `Oobe.PassphraseUpfront`** (Default `true`):
+  schaltet die Passphrase-Vorabfrage + den Handoff ab - dann fragt die
+  Specialize-Konsole wie in v1.2.x (passend zum Kill-Switch-Muster von
+  `Oobe.AutoLaunch` / `Abnahme.AutoRun`).
+- **Doku:** Neues Kapitel 2.7 (Intune-Feinschliff: Autopilot-Profil — EULA/
+  Datenschutz/Kontooptionen ausblenden, feste Sprache + Auto-Tastatur nur mit
+  LAN; damit schrumpft die End-OOBE auf einschalten → Anmeldung → Desktop);
+  Ablauf 3.1/3.2 neu geschrieben (ein Eingabeblock); Kapitel 8 um drei
+  Hardware-Checks ergänzt (Tastatur-Neustart, Wiederanlauf inkl. Gegenproben,
+  Handoff-Roundtrip inkl. Fallback-Gegenprobe); Kapitel 7 um die
+  Handoff-Sicherheitsbetrachtung ergänzt.
+
+### Review-Härtung (3 adversariale Reviewer vor Release; 2 Majors gefunden und behoben)
+
+- **MAJOR behoben:** Ein defekter/halb geschriebener Secrets-Blob (FAT32-
+  Klassiker) hätte die neue WinPE-Passphrase-Abfrage als Terminating Error
+  abbrechen können - auf dem RAID-Wiederanlauf wäre das Gerät gewiped ohne
+  Installation gestrandet. Jetzt: Parse-Guard in `Get-HephaistosSecrets`
+  (unlesbarer Blob ⇒ gelbe Warnung + `$null`) UND try/catch um die
+  Vorabfrage - das „nie ein Gate"-Versprechen gilt damit auch für Ausnahmen.
+- **MAJOR behoben:** Zwei frühe Rückwege in `Restore-HephHandoff` (Serial
+  nicht lesbar; Stick-Wurzel = Systemlaufwerk) ließen das Handoff-Paar
+  unangetastet liegen. Jetzt wird auf JEDEM Rückweg mindestens der Ciphertext
+  geschreddert; zusätzlich schreibt WinPE bei manuell eingetippter
+  Seriennummer gar keinen Handoff mehr (Specialize könnte ihn nie zuordnen).
+- Kleinere Härtungen: `.tmp`-Reste des atomaren Schreibens werden überall
+  mitgeschreddert (Save-Fehlerpfad, Sweep-Filter `handoff.key.json*`,
+  Abnahme-Sweep); der Tastatur-Konsolen-Neustart quotet den Pfad und fällt
+  bei Startfehler auf das US-Layout-Fenster zurück statt hart zu enden; die
+  WinPE-Abschlussmeldung verspricht „ohne weitere Eingabe" nur noch, wenn der
+  Handoff wirklich geschrieben wurde.
+
+### Sicherheitsbetrachtung (Kurzfassung)
+
+Ein Angreifer mit NUR Stick oder NUR Gerät gewinnt gegenüber heute nichts
+(Zufallsschlüssel ohne Ciphertext bzw. Ciphertext ohne Schlüssel). Das einzige
+neue Fenster — Diebstahl BEIDER Medien zwischen Staging und Specialize-Konsum —
+ist Minuten kurz, an die physische Anwesenheit des Technikers gebunden und
+kleiner als das bestehende akzeptierte Risiko (Stick-Diebstahl + Offline-
+Brute-Force gegen die Team-Passphrase, unbegrenzte Zeit). Der Schlüssel wird
+NIE aus der Passphrase abgeleitet (sonst wäre der Haupt-Blob auf dem Stick
+direkt entsperrbar). Löschen überschreibt vorher den Dateiinhalt (auf Flash
+best effort — die echte Rückfallebene bleibt die Rotierbarkeit von App-Secret
+und Webhook in Entra ID).
+
 ## 1.2.4 (2026-08-27) — UEFI-Boot-Override nach der RAID→AHCI-Umstellung
 
 ### Behoben

@@ -12,14 +12,14 @@
           werden beim nächsten Entsperren automatisch neu verschlüsselt)
         - Graph-App-Token (client_credentials), Technikername, VC++-Runtime-Workaround
 .NOTES
-    HEPHAISTOS v1.2.4 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
+    HEPHAISTOS v1.3.0 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
     Benötigt PowerShell 5.1 (WinPE/OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM
     gespeichert (Pflicht für PS 5.1 + Umlaute).
 #>
 
 # ============================================================ Version (zentral)
 # Eine Quelle für Banner, Report-Header UND Report-Footer (behebt Rev04/Rev05-Drift).
-$HephaistosVersion = '1.2.4'
+$HephaistosVersion = '1.3.0'
 
 # Konsole auf UTF-8, damit Haken/Linien-Zeichen sauber dargestellt werden
 # (in WinPE/OOBE nicht immer möglich - best effort wie im Original).
@@ -228,12 +228,16 @@ function Get-HephaistosDeviceInfo {
         if ($csp -and $csp.Name) { $model = ([string]$csp.Name).Trim() }
     } catch { }
     if (-not $model) { $model = 'Unbekanntes Modell' }
+    $manual = $false
     while (-not $serial) {
         if ($NoPrompt) { break }
         Write-Host 'Seriennummer konnte nicht automatisch gelesen werden.' -ForegroundColor Yellow
         $serial = (Read-Host 'Service Tag bitte manuell eingeben (Aufkleber Unterseite)').Trim() -replace '\s', ''
+        if ($serial) { $manual = $true }
     }
-    @{ Serial = $serial; Model = $model }
+    # ManualSerial (v1.3.0): manuell eingetippte Seriennummern sind fehleranfällig -
+    # der Preflight-Wiederanlauf akzeptiert für sie KEINE gespeicherte Zustimmung.
+    @{ Serial = $serial; Model = $model; ManualSerial = $manual }
 }
 
 function Initialize-HephaistosDevice {
@@ -395,8 +399,32 @@ function Get-HephaistosSecrets {
         [int]$MaxTries = 3
     )
     if ($Script:HephSecrets) { return $Script:HephSecrets }
+    # v1.3.0: Split-Key-Handoff aus der WinPE-Phase konsumieren - die Passphrase
+    # wurde dort bereits eingegeben und geprüft. Bewusst NUR im OOBE-/Specialize-
+    # Kontext (Abnahme/Send behalten den Passphrase-Weg; der Handoff enthält
+    # ohnehin nur die Upload-Felder). Der Konsum passiert HIER in der Lib statt
+    # im Orchestrator, weil $Script:-Scope nicht über die &-Grenze in die
+    # Schritt-Scripts reicht (Review-Blocker v1.3.0).
+    if (($env:HEPH_SPECIALIZE -eq '1') -or ($env:USERNAME -ieq 'defaultuser0')) {
+        try {
+            $handoff = Restore-HephHandoff
+            if ($handoff) {
+                Write-HephDim 'Zugänge aus dem WinPE-Handoff übernommen (Passphrase wurde in WinPE geprüft; Handoff-Dateien verbraucht und gelöscht).'
+                $Script:HephSecrets = $handoff
+                return $Script:HephSecrets
+            }
+        } catch { }
+    }
     if (-not (Test-Path $Path)) { return $null }
-    $blob = Get-Content $Path -Raw | ConvertFrom-Json
+    # v1.3.0 (Review-MAJOR): Ein defekter/halb geschriebener Blob (FAT32-Klassiker)
+    # darf NIE als Terminating Error hochschlagen - unter ErrorActionPreference=
+    # Stop würde das sonst z.B. die WinPE-Phase VOR der Installation abbrechen.
+    $blob = $null
+    try { $blob = Get-Content $Path -Raw | ConvertFrom-Json } catch { }
+    if (-not $blob -or -not $blob.PSObject.Properties['Data']) {
+        Write-HephWarn ('Secrets-Datei unlesbar oder beschädigt: {0}' -f $Path)
+        return $null
+    }
     $isLegacy = -not $blob.PSObject.Properties['Iterations']
     for ($try = 1; $try -le $MaxTries; $try++) {
         $pass = Read-Passphrase 'Passphrase für die HEPHAISTOS-Secrets'
@@ -419,6 +447,197 @@ function Get-HephaistosSecrets {
     }
     Write-HephWarn ('Secrets bleiben gesperrt ({0}x falsche Passphrase).' -f $MaxTries)
     return $null
+}
+
+# ============================================================ Split-Key-Handoff (v1.3.0)
+# Die Team-Passphrase wird seit v1.3.0 schon in WinPE eingegeben und geprüft.
+# Damit die Specialize-Phase (nach Neustart + Disk-Wipe) die Zugänge OHNE neue
+# Passphrase-Eingabe bekommt, reisen sie als "Split-Key-Handoff": Ciphertext
+# auf C:, ein zufälliger Einmal-Schlüssel auf dem Stick. Jede Hälfte allein ist
+# kryptographisch wertlos; beim Verbrauch werden BEIDE Dateien geprüft
+# (Seriennummer, Paarungs-Hash, TTL) und danach IMMER überschrieben+gelöscht.
+# Scheitert irgendetwas, greift der bisherige Passphrase-Prompt als Fallback.
+
+function Remove-HephSecureFile {
+    # Überschreibt den Dateiinhalt vor dem Löschen mit Zufallsbytes (Review-
+    # Auflage: einfache Löschung ist auf Flash-Medien keine Vernichtung; wegen
+    # Wear-Leveling bleibt auch das best effort - die echte Absicherung ist,
+    # dass alle Zugänge in Entra ID rotierbar sind). Still, wirft nie.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    try {
+        if (-not (Test-Path $Path)) { return }
+        try {
+            $len = (Get-Item $Path).Length
+            if ($len -gt 0 -and $len -lt 1MB) {
+                $junk = New-Object byte[] ([int]$len)
+                [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($junk)
+                [IO.File]::WriteAllBytes($Path, $junk)
+            }
+        } catch { }
+        Remove-Item -Path $Path -Force -ErrorAction SilentlyContinue
+    } catch { }
+}
+
+function New-HephHandoffKey {
+    # 32 Zufallsbytes als Base64 - Einmal-Schlüssel für genau einen Handoff.
+    # WICHTIG: niemals aus der Passphrase ableiten (ein abgeleiteter Schlüssel
+    # auf dem Stick würde den Haupt-Blob dort direkt entsperrbar machen).
+    $b = New-Object byte[] 32
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+    [Convert]::ToBase64String($b)
+}
+
+function Save-HephHandoff {
+    # Schreibt beide Handoff-Hälften (WinPE, nach der Installation):
+    #   CipherPath (auf C:)   = reduzierte Secrets (nur Upload-Felder), AES-256
+    #                           unter dem Einmal-Schlüssel, plus Serial/CreatedUtc
+    #   KeyPath (auf dem STICK) = Einmal-Schlüssel + Serial + Paarungs-Hash + CreatedUtc
+    # Harte Regel (Review): Schlüssel und Ciphertext dürfen NIE auf demselben
+    # Medium liegen - ohne Stick bzw. bei Pfad-Verdacht wird geworfen (der
+    # Aufrufer fällt dann auf den Passphrase-Weg zurück).
+    param(
+        [Parameter(Mandatory = $true)]$Secrets,
+        [Parameter(Mandatory = $true)][string]$KeyB64,
+        [Parameter(Mandatory = $true)][string]$CipherPath,
+        [Parameter(Mandatory = $true)][string]$KeyPath,
+        [Parameter(Mandatory = $true)][string]$Serial,
+        [Parameter(Mandatory = $true)][string]$UsbRoot
+    )
+    if ([string]::IsNullOrWhiteSpace($UsbRoot)) { throw 'kein Stick - Handoff verweigert' }
+    if (-not $KeyPath.StartsWith($UsbRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Schlüsselpfad liegt nicht auf dem Stick - Handoff verweigert' }
+    if ([IO.Path]::GetPathRoot($UsbRoot) -ieq [IO.Path]::GetPathRoot($CipherPath)) { throw 'Stick- und Ziellaufwerk identisch - Handoff verweigert' }
+    # Reduziertes Feld-Set (least privilege): nur was der Upload + die Teams-
+    # Karte brauchen. Mail-Felder bleiben bewusst beim Passphrase-Weg.
+    $subset = [ordered]@{}
+    foreach ($f in @('TenantId', 'AppId', 'AppSecret', 'TeamsWebhookUrl')) {
+        if ($Secrets.PSObject.Properties[$f] -and $Secrets.$f) { $subset[$f] = [string]$Secrets.$f }
+    }
+    if ($subset.Count -eq 0) { throw 'keine übertragbaren Secrets-Felder' }
+    $blob = Protect-HephaistosSecret -Plain (([pscustomobject]$subset) | ConvertTo-Json -Compress) -Pass $KeyB64
+    $nowUtc = (Get-Date).ToUniversalTime().ToString('o')
+    $blob | Add-Member -NotePropertyName Purpose    -NotePropertyValue 'handoff'
+    $blob | Add-Member -NotePropertyName Serial     -NotePropertyValue $Serial
+    $blob | Add-Member -NotePropertyName CreatedUtc -NotePropertyValue $nowUtc
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $pairHash = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$blob.Data))).Replace('-', '')
+    $keyRec = [pscustomobject]@{
+        KeyB64       = $KeyB64
+        Serial       = $Serial
+        CipherSha256 = $pairHash
+        CreatedUtc   = $nowUtc
+    }
+    # Atomar schreiben (temp + rename): eine halb geschriebene Datei fällt beim
+    # Verbrauch durch den Paarungs-Hash und landet sicher im Passphrase-Fallback.
+    foreach ($w in @(@($CipherPath, $blob), @($KeyPath, $keyRec))) {
+        $dir = Split-Path -Parent $w[0]
+        if ($dir -and -not (Test-Path $dir)) { $null = New-Item -Path $dir -ItemType Directory -Force }
+        $tmp = $w[0] + '.tmp'
+        try {
+            $w[1] | ConvertTo-Json | Set-Content -Path $tmp -Encoding ASCII
+            Move-Item -Path $tmp -Destination $w[0] -Force
+        } catch {
+            # Review-Auflage: eine liegengebliebene .tmp (enthält beim Key-File
+            # den Klartext-Schlüssel!) wird sofort geschreddert, dann Fehler hoch.
+            Remove-HephSecureFile -Path $tmp
+            throw
+        }
+    }
+}
+
+function Restore-HephHandoff {
+    # Verbraucht den Handoff (Specialize/OOBE): prüft Seriennummer (live via WMI),
+    # Paarungs-Hash und TTL, entschlüsselt - und löscht IMMER beide Dateien
+    # (Erfolg wie Fehlschlag; ein Handoff gilt genau einmal). Rückgabe: Objekt
+    # mit den Upload-Feldern oder $null (dann Passphrase-Prompt wie bisher).
+    param(
+        [string]$CipherPath = 'C:\OSDCloud\HEPHAISTOS\handoff.enc.json',
+        [int]$MaxAgeHours = 24
+    )
+    $KeyPath = $null
+    try {
+        $dev = Get-HephaistosDeviceInfo -NoPrompt
+        $serial = [string]$dev.Serial
+        if (-not $serial) {
+            # Review-MAJOR: Ohne lesbare Seriennummer ist dieser Handoff hier NIE
+            # konsumierbar - den Ciphertext sofort entsorgen, statt das Paar am
+            # Leben zu lassen (der Stick-Schlüssel allein ist wertlos und fällt
+            # beim nächsten WinPE-Start dem TTL-Sweep zum Opfer).
+            Remove-HephSecureFile -Path $CipherPath
+            return $null
+        }
+        $usb = Find-HephaistosUsb
+        if (-not $usb) {
+            # Ohne Stick keinen halben Handoff aufheben (Review-Auflage): der
+            # Ciphertext auf C: wird entsorgt; nach erneutem Lauf mit Stick
+            # greift der Passphrase-Weg.
+            Remove-HephSecureFile -Path $CipherPath
+            return $null
+        }
+        # Harte Regel: der Schlüssel darf NIE vom Systemlaufwerk kommen. Auch
+        # hier den Ciphertext entsorgen (Review-MAJOR: kein Rückweg ohne Scrub).
+        if ([IO.Path]::GetPathRoot($usb) -ieq [IO.Path]::GetPathRoot($CipherPath)) {
+            Remove-HephSecureFile -Path $CipherPath
+            return $null
+        }
+        $KeyPath = Join-Path $usb ("Logs\{0}\state\handoff.key.json" -f $serial)
+        $haveKey    = Test-Path $KeyPath
+        $haveCipher = Test-Path $CipherPath
+        if (-not ($haveKey -and $haveCipher)) {
+            # Halbe Paare sind wertlos und werden entsorgt.
+            if ($haveKey)    { Remove-HephSecureFile -Path $KeyPath }
+            if ($haveCipher) { Remove-HephSecureFile -Path $CipherPath }
+            return $null
+        }
+        try {
+            $keyRec = Get-Content $KeyPath -Raw | ConvertFrom-Json
+            $blob   = Get-Content $CipherPath -Raw | ConvertFrom-Json
+            if (([string]$keyRec.Serial -ne $serial) -or ([string]$blob.Serial -ne $serial)) { return $null }
+            $sha = [Security.Cryptography.SHA256]::Create()
+            $pairHash = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$blob.Data))).Replace('-', '')
+            if ([string]$keyRec.CipherSha256 -ne $pairHash) { return $null }
+            # TTL: großzügig (bekannter Uhren-Skew) und als Grenze fürs
+            # Liegenbleiben gedacht, nicht als Sicherheitsanker - der ist die
+            # One-Shot-Löschung. Parse-Fehler => abgelaufen (fail closed).
+            try {
+                $created = [DateTime]::Parse([string]$keyRec.CreatedUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
+                if ([Math]::Abs(((Get-Date).ToUniversalTime() - $created.ToUniversalTime()).TotalHours) -gt $MaxAgeHours) { return $null }
+            } catch { return $null }
+            $plain = Unprotect-HephaistosSecret -Blob $blob -Pass ([string]$keyRec.KeyB64)
+            if (-not $plain) { return $null }
+            return ($plain | ConvertFrom-Json)
+        } finally {
+            Remove-HephSecureFile -Path $KeyPath
+            Remove-HephSecureFile -Path $CipherPath
+        }
+    } catch {
+        if ($KeyPath) { Remove-HephSecureFile -Path $KeyPath }
+        Remove-HephSecureFile -Path $CipherPath
+        return $null
+    }
+}
+
+function Clear-HephHandoffKeys {
+    # Aufräumen beim WinPE-Start: Schlüssel DIESER Seriennummer immer entwerten
+    # (ein neuer Lauf macht den alten Handoff ungültig), fremde Seriennummern
+    # nur wenn älter als MaxAgeHours - so bleibt das Wandern EINES Sticks
+    # zwischen mehreren parallel laufenden Geräten möglich. Best effort, still.
+    param(
+        [Parameter(Mandatory = $true)][string]$UsbRoot,
+        [string]$Serial = '',
+        [int]$MaxAgeHours = 24
+    )
+    try {
+        $logs = Join-Path $UsbRoot 'Logs'
+        if (-not (Test-Path $logs)) { return }
+        # Filter mit Wildcard: räumt auch .tmp-Reste eines abgebrochenen
+        # atomaren Schreibvorgangs ab (Review-Auflage).
+        foreach ($f in @(Get-ChildItem -Path $logs -Recurse -Filter 'handoff.key.json*' -File -ErrorAction SilentlyContinue)) {
+            $mine = ($Serial -and ($f.FullName -like ('*\Logs\{0}\state\*' -f $Serial)))
+            $old  = $false
+            try { $old = ([Math]::Abs(((Get-Date) - $f.LastWriteTime).TotalHours) -gt $MaxAgeHours) } catch { $old = $true }
+            if ($mine -or $old) { Remove-HephSecureFile -Path $f.FullName }
+        }
+    } catch { }
 }
 
 # ============================================================ Graph-Token
@@ -552,7 +771,7 @@ Block WORTGLEICH am Anfang - nur die FallbackRoots-Zeile wird je Phase angepasst
 (Reihenfolge: Staged (C:) vor Stick, siehe SPEC §7.x der jeweiligen Datei).
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.2.4'
+$Script:HephVersion = '1.3.0'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots je Phase; Beispiel OOBE: Staged (C:) zuerst, dann Stick.
 $Script:HephFallbackRoots = @('C:\OSDCloud\HEPHAISTOS\Fallback')

@@ -15,7 +15,7 @@
         [7] Neustart via wpeutil reboot (10-Sekunden-Countdown)
     Status pro Gerät: <Stick>\Logs\<ServiceTag>\state\*.done (Flag-Namen wie im Original).
 .NOTES
-    HEPHAISTOS v1.2.4 - portiert aus USB_ScriptTool Rev05 (START-ONBOARDING.cmd +
+    HEPHAISTOS v1.3.0 - portiert aus USB_ScriptTool Rev05 (START-ONBOARDING.cmd +
     SLG-Onboarding.ps1). PowerShell 5.1. UTF-8 mit BOM (Pflicht für PS 5.1 + Umlaute).
     Bugfix (Handoff 7.1): step2_osinstall.started wird ERST unmittelbar vor
     Start-OSDCloud geschrieben - nicht schon bei der Menüauswahl wie im alten
@@ -26,8 +26,62 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.2.4'
+$Script:HephVersion = '1.3.0'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
+
+# ============================================================ Tastatur-Layout (v1.3.0)
+# WinPE startet mit US-Layout - riskant für verdeckte Eingaben (Passphrase:
+# Y/Z-Falle, bekannter Praxisfund aus der OOBE-Phase). wpeutil stellt auf
+# Deutsch um, wirkt aber NUR in NEU geöffneten Konsolen - deshalb einmaliger
+# Selbst-Neustart in einem frischen Fenster (Guard per Umgebungsvariable, die
+# sich in den Kindprozess vererbt). Scheitert etwas: gelber Hinweis, US-Layout
+# bleibt - wie bisher. Dieser Block läuft VOR jedem Prompt.
+if ((Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\MiniNT') -and ($env:HEPH_KBD_DONE -ne '1')) {
+    $kbdOk = $false
+    try {
+        & wpeutil.exe SetKeyboardLayout '0407:00000407' 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { $kbdOk = $true }
+    } catch { }
+    if ($kbdOk) {
+        $selfPath = $PSCommandPath
+        if (-not $selfPath -or -not (Test-Path $selfPath)) {
+            # Per StartURL/iex gestartet: eigene Kopie beschaffen (Repo, sonst Stick).
+            try {
+                $selfPath = Join-Path $env:TEMP 'HEPHAISTOS\boot\Start-Hephaistos.ps1'
+                $null = New-Item -Path (Split-Path -Parent $selfPath) -ItemType Directory -Force
+                [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+                Invoke-WebRequest -UseBasicParsing -Uri ('{0}/boot/Start-Hephaistos.ps1' -f $Script:HephRawBase) -OutFile $selfPath
+            } catch { $selfPath = $null }
+            if (-not $selfPath -or -not (Test-Path $selfPath)) {
+                foreach ($kbdDrv in [IO.DriveInfo]::GetDrives()) {
+                    try {
+                        $kbdCand = Join-Path $kbdDrv.Name '_HEPHAISTOS\Fallback\boot\Start-Hephaistos.ps1'
+                        if ($kbdDrv.IsReady -and (Test-Path $kbdCand)) { $selfPath = $kbdCand; break }
+                    } catch { }
+                }
+            }
+        }
+        if ($selfPath -and (Test-Path $selfPath)) {
+            $env:HEPH_KBD_DONE = '1'
+            Write-Host ''
+            Write-Host 'Deutsche Tastatur aktiviert - die Konsole startet einmalig neu ...' -ForegroundColor Cyan
+            # Pfad explizit quoten (Start-Process -ArgumentList quotet in PS 5.1
+            # NICHT selbst); scheitert der Kind-Start, läuft dieses Fenster mit
+            # US-Layout weiter statt hart zu enden (Review-Auflage).
+            $kbdChild = $null
+            try {
+                $kbdChild = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $selfPath) -Wait -PassThru
+            } catch { $kbdChild = $null }
+            if ($kbdChild) { exit 0 }
+            $env:HEPH_KBD_DONE = ''
+            Write-Host 'Hinweis: Konsolen-Neustart fehlgeschlagen - Tastatur bleibt im US-Layout (Y/Z beachten).' -ForegroundColor Yellow
+        } else {
+            Write-Host 'Hinweis: Tastatur bleibt im US-Layout (Selbst-Neustart nicht möglich) - bei Passphrase und LOESCHEN Y/Z beachten!' -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host 'Hinweis: Tastatur-Umstellung nicht möglich - bei Passphrase und LOESCHEN Y/Z beachten (US-Layout).' -ForegroundColor Yellow
+    }
+}
 # FallbackRoots je Phase - Boot-Phase: <Stick>:\_HEPHAISTOS\Fallback. Die Lib selbst
 # kann vom Stick kommen, deshalb Minimal-Stick-Suche VOR dem Lib-Load (DriveInfo-
 # Schleife, keine Get-Volume-Abhängigkeit - läuft so auch in WinPE).
@@ -103,6 +157,37 @@ function Invoke-HephReboot {
     try { Stop-Transcript | Out-Null } catch { }
     if ($Script:IsWinPE) { wpeutil reboot } else { shutdown.exe /r /t 3 /f }
     exit $ExitCode
+}
+
+function Wait-HephResumeCountdown {
+    # v1.3.0: Countdown für den Preflight-Wiederanlauf. Rückgabe $true = weiter,
+    # $false = Techniker hat abgebrochen. Review-Auflagen: Eingabepuffer wird
+    # VORHER NICHT geleert (eine versehentlich gepufferte Taste bricht ab -
+    # fail-safe), nach dem Abbruch aber schon (damit die Taste nicht ins nächste
+    # Read-Host rutscht); jede Exception zählt als Abbruch (fail closed).
+    param([int]$Seconds = 15)
+    try {
+        $end = (Get-Date).AddSeconds($Seconds)
+        $shown = -1
+        while ((Get-Date) -lt $end) {
+            $remain = [int][Math]::Ceiling(($end - (Get-Date)).TotalSeconds)
+            if ($remain -ne $shown) {
+                Write-Host -NoNewline ("`r   Weiter in {0,2} s - beliebige Taste: Eingaben manuell wiederholen " -f $remain) -ForegroundColor Yellow
+                $shown = $remain
+            }
+            if ([Console]::KeyAvailable) {
+                while ([Console]::KeyAvailable) { $null = [Console]::ReadKey($true) }
+                Write-Host ''
+                return $false
+            }
+            Start-Sleep -Milliseconds 200
+        }
+        Write-Host ''
+        return $true
+    } catch {
+        Write-Host ''
+        return $false
+    }
 }
 
 function Update-HephFallbackMirror {
@@ -234,6 +319,12 @@ try {
 $DevDir   = $dirs.DevDir
 $StateDir = $dirs.StateDir
 
+# v1.3.0: Alte Handoff-Schlüssel entwerten - für DIESE Seriennummer immer (ein
+# neuer Lauf macht den alten Handoff ungültig), fremde nur wenn abgelaufen.
+if ($usbRoot -and (Get-Command Clear-HephHandoffKeys -ErrorAction SilentlyContinue)) {
+    Clear-HephHandoffKeys -UsbRoot $usbRoot -Serial $Serial
+}
+
 # Sitzung protokollieren (best effort, Port aus SLG-Onboarding.ps1)
 try {
     Start-Transcript -Path (Join-Path $DevDir ('WinPE_{0}.log' -f (Get-Date -Format 'yyyy-MM-dd_HHmm'))) -Append | Out-Null
@@ -262,6 +353,69 @@ try {
 }
 
 $osName = [string]$cfg.OS.OSName
+
+# ============================================================ Preflight-Wiederanlauf (v1.3.0)
+# Nach der automatischen RAID->AHCI-Umstellung bootet der Stick erneut - bisher
+# musste der Techniker Name/Sprache/Tag/LOESCHEN komplett neu eingeben. Lauf 1
+# hinterlegt die Eingaben jetzt als EINMALIGE Zustimmung auf dem Stick; dieser
+# Block prüft sie hart (Review-Auflagen) und läuft nach einem 15-s-Countdown
+# ohne Neu-Eingabe weiter. Jede Unstimmigkeit => normale interaktive Eingabe.
+$Script:Resume = $null
+$consentPath = Join-Path $StateDir 'preflight.resume.json'
+if (Test-Path $consentPath) {
+    $consent = $null
+    try { $consent = Get-Content $consentPath -Raw | ConvertFrom-Json } catch { }
+    # One-Shot: SOFORT löschen, bevor irgendetwas anderes passiert - eine
+    # liegengebliebene Zustimmung darf NIE einen späteren Lauf auto-bestätigen.
+    try { Remove-Item -Path $consentPath -Force } catch { }
+    $why = $null
+    if (-not $consent) { $why = 'Datei unlesbar' }
+    if (-not $why -and $devInfo.ManualSerial) { $why = 'Seriennummer wurde manuell eingegeben' }
+    if (-not $why -and (([string]$consent.Serial) -cne $Serial)) { $why = 'Seriennummer passt nicht (live via WMI geprüft)' }
+    if (-not $why -and (([string]$consent.Model) -ne $Model)) { $why = 'Modell passt nicht' }
+    if (-not $why) {
+        # Nonce-Bindung: Zustimmung gilt nur für GENAU den Umstell-Zyklus, der
+        # sie geschrieben hat (Nonce steht auch im storage_mode.attempted-Flag).
+        $attFlag = Get-StepFlag -StateDir $StateDir -Name 'storage_mode.attempted'
+        $attText = ''
+        try { if (Test-Path $attFlag) { $attText = Get-Content $attFlag -Raw } } catch { }
+        if (-not ([string]$consent.Nonce) -or ($attText -notmatch [regex]::Escape([string]$consent.Nonce))) { $why = 'Zyklus-Nonce passt nicht' }
+    }
+    if (-not $why) {
+        # Physischer Nachweis statt Uhr (die ist in WinPE kein verlässlicher
+        # Zeuge - Praxisfund): ALLE internen Disks müssen leer sein, d.h. das
+        # Clear-Disk aus Lauf 1 ist nachweislich passiert und seitdem wurde
+        # nichts installiert. Irgendeine Partition vorhanden => interaktiv.
+        $disksEmpty = $true
+        try {
+            foreach ($d in @(Get-Disk | Where-Object { ($_.BusType -in @('NVMe', 'SATA', 'SAS', 'RAID', 'ATA')) -and ($_.Size -gt 60GB) })) {
+                if (@(Get-Partition -DiskNumber $d.Number -ErrorAction SilentlyContinue).Count -gt 0) { $disksEmpty = $false; break }
+            }
+        } catch { $disksEmpty = $false }
+        if (-not $disksEmpty) { $why = 'interne Disk ist nicht leer' }
+    }
+    if ($why) {
+        Write-HephDim ('Gespeicherter Wiederanlauf verworfen ({0}) - Eingaben werden normal abgefragt.' -f $why)
+    } else {
+        $barY = [string][char]0x2550 * 70
+        Write-Host ''
+        Write-Host $barY -ForegroundColor Yellow
+        Write-Host '   WIEDERANLAUF nach RAID->AHCI-Umstellung (Eingaben aus Lauf 1)' -ForegroundColor White
+        Write-Host $barY -ForegroundColor Yellow
+        Write-Host ('   Gerät:       {0}' -f $Model) -ForegroundColor White
+        Write-Host ('   Service Tag: {0}' -f $Serial) -ForegroundColor White
+        Write-Host ('   Techniker:   {0}' -f $consent.Technician) -ForegroundColor White
+        Write-Host ('   Ziel-OS:     {0} ({1})' -f $osName, $consent.LanguageKey) -ForegroundColor White
+        Write-Host ('   Group Tag:   {0}' -f $consent.GroupTag) -ForegroundColor White
+        Write-HephDim '   LOESCHEN wurde in Lauf 1 bestätigt; die internen Disks sind bereits leer.'
+        Write-Host $barY -ForegroundColor Yellow
+        if (Wait-HephResumeCountdown -Seconds 15) {
+            $Script:Resume = $consent
+        } else {
+            Write-HephInfo 'Wiederanlauf abgebrochen - Eingaben werden neu abgefragt.'
+        }
+    }
+}
 
 # Ohne das OSD-Modul (Start-OSDCloud) läuft hier nichts - dieses Script ist für
 # die OSDCloud-WinPE-Umgebung gebaut (Stick kommt aus tools/Build-USB.ps1).
@@ -307,7 +461,10 @@ if (Get-Command -Name Get-OSDCloudOperatingSystems -ErrorAction SilentlyContinue
                 Write-HephWarn 'Nächstliegende gelistete Namen:'
                 foreach ($n in $near) { Write-Host ('    {0}' -f $n) -ForegroundColor Yellow }
             }
-            if (-not (Confirm-Choice 'Trotzdem mit dem konfigurierten Namen fortfahren?')) {
+            if ($Script:Resume) {
+                # Wiederanlauf: dieselbe Warnung wurde in Lauf 1 bereits bestätigt.
+                Write-HephWarn 'Weiter trotz Warnung (Wiederanlauf - in Lauf 1 bestätigt).'
+            } elseif (-not (Confirm-Choice 'Trotzdem mit dem konfigurierten Namen fortfahren?')) {
                 Write-HephWarn 'Abbruch durch Techniker - es wurde nichts verändert.'
                 Invoke-HephReboot -CountdownSeconds 5
             }
@@ -323,6 +480,21 @@ if (Get-Command -Name Get-OSDCloudOperatingSystems -ErrorAction SilentlyContinue
 # Handoff 4.1: Freitext-Pflichtfeld so früh wie sinnvoll; der Wert wandert in den
 # Geräteordner (Stick) und wird in OOBE/Abnahme als Default angeboten.
 Write-Host ''
+if ($Script:Resume -and $Script:Resume.Technician) {
+    # Wiederanlauf: Name aus Lauf 1 - Get-TechnicianName liefert den Cache sofort.
+    $Script:TechName = [string]$Script:Resume.Technician
+    Write-HephOk ('Techniker (übernommen): {0}' -f $Script:TechName)
+} else {
+    # v1.3.0: technician.txt aus einem früheren Lauf als Enter-Default anbieten
+    # (lag bisher ungenutzt auf dem Stick).
+    $techDefault = ''
+    try {
+        $techFile = Join-Path $DevDir 'technician.txt'
+        if (Test-Path $techFile) { $techDefault = ([string](Get-Content $techFile -Raw)).Trim() }
+    } catch { }
+    $Script:TechName = $null
+    $null = Get-TechnicianName -Default $techDefault
+}
 $tech = Get-TechnicianName
 try {
     Set-Content -Path (Join-Path $DevDir 'technician.txt') -Value $tech -Encoding UTF8
@@ -340,17 +512,25 @@ if ($langProps.Count -eq 0) {
 $defaultKey  = [string]$cfg.DefaultLanguageKey
 $defaultProp = $langProps | Where-Object { $_.Name -eq $defaultKey } | Select-Object -First 1
 if (-not $defaultProp) { $defaultProp = $langProps[0]; $defaultKey = $defaultProp.Name }
-Write-Host ''
-Write-HephInfo 'Sprache der Windows-Installation wählen:'
-foreach ($p in $langProps) {
-    Write-Host ('  [{0}] {1}' -f $p.Name, $p.Value.Label) -ForegroundColor White
-}
 $langProp = $null
-while (-not $langProp) {
-    $sel = (Read-Host ('Sprache [Enter = {0}]' -f $defaultProp.Value.Label)).Trim()
-    if (-not $sel) { $sel = $defaultKey }
-    $langProp = $langProps | Where-Object { $_.Name -eq $sel } | Select-Object -First 1
-    if (-not $langProp) { Write-HephWarn 'Ungültige Auswahl - bitte eine Nummer aus der Liste eingeben.' }
+if ($Script:Resume -and $Script:Resume.LanguageKey) {
+    # Wiederanlauf: Sprache aus Lauf 1 - gegen die FRISCH geladene Config
+    # aufgelöst (kein gespeicherter OSLanguage-Wert, der veraltet sein könnte).
+    $langProp = $langProps | Where-Object { $_.Name -eq [string]$Script:Resume.LanguageKey } | Select-Object -First 1
+    if (-not $langProp) { Write-HephWarn 'Gespeicherte Sprache nicht mehr in der Config - bitte neu wählen.' }
+}
+if (-not $langProp) {
+    Write-Host ''
+    Write-HephInfo 'Sprache der Windows-Installation wählen:'
+    foreach ($p in $langProps) {
+        Write-Host ('  [{0}] {1}' -f $p.Name, $p.Value.Label) -ForegroundColor White
+    }
+    while (-not $langProp) {
+        $sel = (Read-Host ('Sprache [Enter = {0}]' -f $defaultProp.Value.Label)).Trim()
+        if (-not $sel) { $sel = $defaultKey }
+        $langProp = $langProps | Where-Object { $_.Name -eq $sel } | Select-Object -First 1
+        if (-not $langProp) { Write-HephWarn 'Ungültige Auswahl - bitte eine Nummer aus der Liste eingeben.' }
+    }
 }
 $lang      = [string]$langProp.Value.OSLanguage
 $langLabel = [string]$langProp.Value.Label
@@ -363,7 +543,11 @@ $groupTagPre = $null
 if ($langProp.Value.PSObject.Properties['GroupTag']) { $groupTagPre = [string]$langProp.Value.GroupTag }
 $cfgTags = @()
 if ($cfg.GroupTags) { $cfgTags = @($cfg.GroupTags) }
-if ($cfgTags.Count -gt 0) {
+if ($Script:Resume -and $Script:Resume.GroupTag -and ($cfgTags -contains [string]$Script:Resume.GroupTag)) {
+    # Wiederanlauf: Tag aus Lauf 1 (nur wenn er noch in der Config existiert).
+    $groupTagPre = [string]$Script:Resume.GroupTag
+    Write-HephOk ('Group Tag (übernommen): {0}' -f $groupTagPre)
+} elseif ($cfgTags.Count -gt 0) {
     Write-Host ''
     Write-HephInfo 'Autopilot Group Tag (Vorauswahl für die OOBE-Phase):'
     for ($i = 0; $i -lt $cfgTags.Count; $i++) {
@@ -400,12 +584,20 @@ Write-Host '   Die interne Disk wird UNWIDERRUFLICH gelöscht und Windows wird' 
 Write-Host '   anschließend vollautomatisch neu installiert (ZTI, keine Rückfrage mehr).' -ForegroundColor Red
 Write-HephDim '   Der USB-Stick ist nicht betroffen; Logs und Status bleiben auf dem Stick.'
 Write-Host $barR -ForegroundColor Red
-$confirm = Read-Host 'Zum Bestätigen LOESCHEN eintippen'
-if ($confirm -ne 'LOESCHEN') {
-    Write-HephWarn 'Abgebrochen - es wurde nichts gelöscht.'
-    if (Confirm-Choice 'Gerät jetzt neu starten?') { Invoke-HephReboot }
-    try { Stop-Transcript | Out-Null } catch { }
-    exit 0
+if ($Script:Resume) {
+    # Wiederanlauf: LOESCHEN wurde in Lauf 1 für GENAU dieses Gerät eingetippt,
+    # die Zustimmung ist einmalig (bereits verbraucht), an den Zyklus-Nonce
+    # gebunden und die internen Disks sind nachweislich leer - der Countdown
+    # oben war das Abbruch-Fenster.
+    Write-HephOk 'Bestätigung aus Lauf 1 übernommen (LOESCHEN wurde dort eingetippt).'
+} else {
+    $confirm = Read-Host 'Zum Bestätigen LOESCHEN eintippen'
+    if ($confirm -ne 'LOESCHEN') {
+        Write-HephWarn 'Abgebrochen - es wurde nichts gelöscht.'
+        if (Confirm-Choice 'Gerät jetzt neu starten?') { Invoke-HephReboot }
+        try { Stop-Transcript | Out-Null } catch { }
+        exit 0
+    }
 }
 
 # ============================================================ Storage-Modus-Preflight (v1.1.0)
@@ -471,7 +663,10 @@ if ($storageTarget -and ($storageTarget -notin @('Keep','None',''))) {
                 }
             } else {
                 Write-HephInfo 'Ablauf: Disk leeren -> Modus umstellen -> automatischer Neustart vom Stick.'
-                Set-Step -StateDir $StateDir -Name 'storage_mode.attempted' -Detail ('{0} -> {1}' -f $cur, $storageTarget)
+                # v1.3.0: Zufalls-Nonce bindet die Wiederanlauf-Zustimmung an GENAU
+                # diesen Umstell-Zyklus (steht im Flag UND in der Consent-Datei).
+                $preflightNonce = [Guid]::NewGuid().ToString()
+                Set-Step -StateDir $StateDir -Name 'storage_mode.attempted' -Detail ('{0} -> {1}, Nonce={2}' -f $cur, $storageTarget, $preflightNonce)
                 # NUR interne Bus-Typen (Thunderbolt/SD/USB bleiben außen vor) und
                 # ALLE internen Disks leeren - sonst könnte eine zweite Disk mit
                 # bootfähigem Rest-OS den automatischen Stick-Boot verhindern.
@@ -505,6 +700,23 @@ if ($storageTarget -and ($storageTarget -notin @('Keep','None',''))) {
                     } else {
                         Write-HephWarn 'Boot-Override (BootNext) nicht möglich - falls das Gerät nicht vom Stick startet: F12 -> USB-Stick wählen.'
                     }
+                    # v1.3.0: Wiederanlauf-Zustimmung NUR HIER - im Erfolgszweig,
+                    # unmittelbar vor dem Neustart (Review-Auflage: nie schon nach
+                    # LOESCHEN, nie in Abbruch-/Fehlerzweigen). Einmalig gültig.
+                    try {
+                        [pscustomobject]@{
+                            Nonce       = $preflightNonce
+                            Serial      = $Serial
+                            Model       = $Model
+                            Technician  = $tech
+                            LanguageKey = [string]$langProp.Name
+                            GroupTag    = $groupTagPre
+                            CreatedUtc  = (Get-Date).ToUniversalTime().ToString('o')
+                        } | ConvertTo-Json | Set-Content -Path (Join-Path $StateDir 'preflight.resume.json') -Encoding UTF8
+                        Write-HephOk 'Eingaben gemerkt - Lauf 2 startet nach dem Neustart ohne erneutes Eintippen (15-s-Abbruchfenster).'
+                    } catch {
+                        Write-HephWarn ('Eingaben konnten nicht gemerkt werden ({0}) - nach dem Neustart bitte neu eingeben.' -f $_.Exception.Message)
+                    }
                     Invoke-HephReboot -CountdownSeconds 5
                 } else {
                     Write-HephErr ('Umstellen fehlgeschlagen: {0}' -f $setOut.Trim())
@@ -522,6 +734,47 @@ if ($storageTarget -and ($storageTarget -notin @('Keep','None',''))) {
             }
         }
     }
+}
+
+# ============================================================ Team-Passphrase (v1.3.0)
+# Die Passphrase wird JETZT abgefragt und sofort geprüft (Tippfehler fallen hier
+# auf - nicht erst 20 Minuten später in der Specialize-Konsole). Die entsperrten
+# Zugänge reisen nach der Installation als Split-Key-Handoff zur Specialize-
+# Phase (Details: Lib). WICHTIG (Review-Auflage): Diese Abfrage ist NIE ein
+# Gate für die Installation - 3x falsch/kein Blob/kein Stick => Installation
+# läuft normal weiter, die Specialize-Phase fragt dann wie bisher selbst.
+# Geschrieben wird hier noch NICHTS - beide Handoff-Dateien entstehen erst im
+# Staging nach der Installation (Abbrüche hinterlassen so keinerlei Artefakte).
+$Script:HandoffSecrets = $null
+$Script:HandoffWritten = $false
+$ppUpfront = $true
+if ($cfg.Oobe -and ($null -ne $cfg.Oobe.PSObject.Properties['PassphraseUpfront']) -and ($null -ne $cfg.Oobe.PassphraseUpfront)) {
+    $ppUpfront = [bool]$cfg.Oobe.PassphraseUpfront
+}
+$secretsBlobPath = $null
+if ($usbRoot) { $secretsBlobPath = Join-Path $usbRoot 'HEPHAISTOS-Secrets\hephaistos.secrets.enc.json' }
+if (-not $ppUpfront) {
+    Write-HephDim 'Passphrase-Vorabfrage per Config deaktiviert (Oobe.PassphraseUpfront) - Specialize fragt wie früher.'
+} elseif ($secretsBlobPath -and (Test-Path $secretsBlobPath)) {
+    Write-Host ''
+    Write-HephInfo 'Team-Passphrase jetzt eingeben - danach ist bis zur Windows-Taste x5 keine Eingabe mehr nötig.'
+    # try/catch (Review-MAJOR): selbst ein unerwarteter Fehler beim Entsperren
+    # darf die Installation nicht verhindern - schlimmstenfalls fragt die
+    # Specialize-Phase die Passphrase wie in v1.2.x selbst ab.
+    try {
+        $Script:HephSecrets = $null
+        $Script:HandoffSecrets = Get-HephaistosSecrets -Path $secretsBlobPath
+    } catch {
+        $Script:HandoffSecrets = $null
+        Write-HephWarn ('Entsperren fehlgeschlagen ({0}).' -f $_.Exception.Message)
+    }
+    if ($Script:HandoffSecrets) {
+        Write-HephOk 'Passphrase geprüft - der Autopilot-Upload läuft später ohne weitere Eingabe.'
+    } else {
+        Write-HephWarn 'Secrets nicht entsperrt - kein Abbruch: Die Specialize-Phase fragt die Passphrase dann wie bisher ab.'
+    }
+} else {
+    Write-HephDim 'Kein Secrets-Blob auf dem Stick - Passphrase-Vorabfrage übersprungen (Specialize fragt bei Bedarf).'
 }
 
 # ============================================================ Windows-Installation
@@ -670,6 +923,30 @@ if ($stagingOk) {
         $stagingOk = $false
         Write-HephErr ('install.json/technician.txt fehlgeschlagen: {0}' -f $_.Exception.Message)
     }
+
+    # --- d) Split-Key-Handoff (v1.3.0): entsperrte Zugänge für die Specialize-Phase ---
+    # Kein Staging-Blocker: scheitert der Handoff, bleibt alles beim alten
+    # Ablauf (Passphrase-Prompt in der Specialize-Konsole).
+    if ($Script:HandoffSecrets -and $devInfo.ManualSerial) {
+        # Review-Auflage: Bei manuell eingetippter Seriennummer kann die
+        # Specialize-Phase (WMI-Lookup, kein Prompt) den Handoff nie zuordnen -
+        # gar nicht erst schreiben, Specialize fragt die Passphrase.
+        Write-HephDim 'Seriennummer wurde manuell eingegeben - Handoff entfällt (Specialize fragt die Passphrase ab).'
+    } elseif ($Script:HandoffSecrets) {
+        try {
+            if (-not (Get-Command Save-HephHandoff -ErrorAction SilentlyContinue)) { throw 'Save-HephHandoff fehlt (Lib-Versionsstand)' }
+            $hoKey = New-HephHandoffKey
+            Save-HephHandoff -Secrets $Script:HandoffSecrets -KeyB64 $hoKey `
+                -CipherPath (Join-Path $stagedRoot 'handoff.enc.json') `
+                -KeyPath (Join-Path $StateDir 'handoff.key.json') `
+                -Serial $Serial -UsbRoot $usbRoot
+            $hoKey = $null
+            $Script:HandoffWritten = $true
+            Write-HephOk 'Split-Key-Handoff geschrieben (Schlüssel auf dem Stick, Daten auf C: - jede Hälfte allein wertlos).'
+        } catch {
+            Write-HephWarn ('Handoff nicht möglich ({0}) - die Specialize-Phase fragt die Passphrase wie bisher ab.' -f $_.Exception.Message)
+        }
+    }
 }
 Write-HephResult -Success $stagingOk -Text $(if ($stagingOk) { 'Staging abgeschlossen.' } else { 'Staging unvollständig - Hinweise oben beachten.' })
 
@@ -677,8 +954,16 @@ Write-HephResult -Success $stagingOk -Text $(if ($stagingOk) { 'Staging abgeschl
 Write-Host ''
 Write-HephOk 'HEPHAISTOS WinPE-Phase abgeschlossen.'
 Write-Host ''
-Write-HephInfo 'Nach dem Neustart: OOBE abwarten, dann Shift+F10 und starten:'
-Write-HephInfo '    C:\OSDCloud\HEPHAISTOS\oobe.cmd     (Kurzform: c:\o)'
+# Abschlussmeldung ehrlich halten (Review-Auflage): "ohne weitere Eingabe" nur
+# versprechen, wenn der Handoff wirklich geschrieben wurde.
+if ($Script:HandoffWritten) {
+    Write-HephInfo 'Nach dem Neustart läuft alles automatisch weiter (BIOS + Autopilot-Hash,'
+    Write-HephInfo 'ohne weitere Eingabe) - bis zur Windows-Taste x5 für das Pre-Provisioning.'
+} else {
+    Write-HephInfo 'Nach dem Neustart öffnet sich die Onboarding-Konsole automatisch (BIOS + Autopilot-Hash).'
+    Write-HephWarn 'Dort wird die Team-Passphrase abgefragt (kein Handoff geschrieben - Hinweise oben).'
+}
+Write-HephDim  'Fallback, falls die Konsole nicht von selbst erscheint: Shift+F10, dann c:\o'
 Write-HephDim  'Der USB-Stick bleibt eingesteckt (Logs, Status und Tools liegen dort).'
 Write-Host ''
 Invoke-HephReboot -CountdownSeconds 10

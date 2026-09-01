@@ -21,7 +21,7 @@
   "MinBuild": 26200,
   "RemoveWinRE": false,
   "GroupTags": ["SLGDE", "SLGFR", "SLGPL", "SLGTEST"],
-  "Oobe": { "AutoLaunch": true },
+  "Oobe": { "AutoLaunch": true, "PassphraseUpfront": true },
   "Abnahme": { "AutoRun": true, "DelayMinutes": 5 },
   "Report": { "TeamsAttachPdf": true },
   "Repo": { "RawBase": "https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main" }

@@ -18,7 +18,7 @@
 .PARAMETER NoReport
     Nur Konsolen-/Text-/JSON-Ausgabe - HTML/PDF/Teams/Mail entfallen.
 .NOTES
-    HEPHAISTOS v1.2.4 - portiert aus USB_ScriptTool Rev05
+    HEPHAISTOS v1.3.0 - portiert aus USB_ScriptTool Rev05
     (Test-SLGDeviceOnboarding.ps1 Rev04 + Invoke-Step4Compliance aus
     SLG-Onboarding.ps1). PowerShell 5.1. UTF-8 mit BOM.
     Dreistufiges Ergebnis - unkritische Checks (Windows Update, Pending
@@ -51,7 +51,7 @@ param(
 )
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.2.4'
+$Script:HephVersion = '1.3.0'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots fuer die Abnahme: Stick-Fallback zuerst, dann gestagte Kopie auf C:.
 # Minimal-Suche nach dem Stick VOR dem Lib-Load (Find-HephaistosUsb liegt erst in der Lib).
@@ -173,6 +173,20 @@ $UsbRoot  = Find-HephaistosUsb
 $init     = Initialize-HephaistosDevice -UsbRoot $UsbRoot -Serial $Serial
 $DevDir   = $init.DevDir
 $StateDir = $init.StateDir
+
+# v1.3.0 (Review-Auflage): liegengebliebene Split-Key-Handoff-Artefakte
+# entsorgen (Specialize nie gelaufen / abgebrochen). Zu diesem Zeitpunkt ist
+# das Gerät provisioniert - ein Handoff hat hier nichts mehr verloren.
+try {
+    if (Get-Command Remove-HephSecureFile -ErrorAction SilentlyContinue) {
+        Remove-HephSecureFile -Path 'C:\OSDCloud\HEPHAISTOS\handoff.enc.json'
+        Remove-HephSecureFile -Path 'C:\OSDCloud\HEPHAISTOS\handoff.enc.json.tmp'
+        if ($UsbRoot -and $Serial) {
+            Remove-HephSecureFile -Path (Join-Path $UsbRoot ("Logs\{0}\state\handoff.key.json" -f $Serial))
+            Remove-HephSecureFile -Path (Join-Path $UsbRoot ("Logs\{0}\state\handoff.key.json.tmp" -f $Serial))
+        }
+    }
+} catch { }
 
 # Sitzung protokollieren (best effort)
 try {

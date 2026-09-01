@@ -20,7 +20,7 @@
            Timeout: gelber Hinweis auf die GroupTag-Gruppenzuordnung, KEIN Neustart.
     Erwartet die geladene HEPHAISTOS-Bibliothek (lib\Hephaistos.Common.ps1) im Scope.
 .NOTES
-    HEPHAISTOS v1.2.4 - portiert aus USB_ScriptTool Rev05
+    HEPHAISTOS v1.3.0 - portiert aus USB_ScriptTool Rev05
     (SLG-Onboarding.ps1 / Invoke-Step3Hash + Scripts\Export-AutopilotHash.ps1 Rev02).
     Benötigt PowerShell 5.1 (OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM gespeichert
     (Pflicht für PS 5.1 + Umlaute).
@@ -185,7 +185,8 @@ if ($secretsPath -and (Test-Path $secretsPath)) {
     Write-HephWarn ('Keine Secrets-Datei gefunden: {0}' -f $(if ($secretsPath) { $secretsPath } else { '<Stick>:\HEPHAISTOS-Secrets\hephaistos.secrets.enc.json' }))
 }
 # v1.2.1: Teams-Webhook für die Auto-Abnahme auf DIESEM Gerät hinterlegen
-# (DPAPI Machine-Scope) - die Passphrase wurde hier ohnehin gerade eingegeben.
+# (DPAPI Machine-Scope) - die Zugänge wurden hier ohnehin gerade entsperrt
+# (seit v1.3.0 meist per WinPE-Handoff statt per Passphrase-Eingabe).
 # Die Auto-Abnahme kann die Teams-Karte damit ohne Passphrase posten.
 if ($secrets -and $secrets.TeamsWebhookUrl -and (Get-Command Save-HephTeamsWebhookCache -ErrorAction SilentlyContinue)) {
     try {

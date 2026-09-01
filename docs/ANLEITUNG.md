@@ -1,6 +1,6 @@
 # HEPHAISTOS — Techniker-Anleitung
 
-**SLG Notebook-Onboarding (HEPHAISTOS) v1.2.4** — portiert und korrigiert aus dem
+**SLG Notebook-Onboarding (HEPHAISTOS) v1.3.0** — portiert und korrigiert aus dem
 USB_ScriptTool (Rev03–Rev05). Diese Anleitung beschreibt den **neuen** Ablauf:
 kompletter Disk-Wipe via OSDCloud, Neuaufbau nach Vorlage, alle Scripts kommen zur
 Laufzeit aus dem GitHub-Repo. Der USB-Stick ist statisch und wartungsfrei.
@@ -179,6 +179,28 @@ erscheint ein gelber Hinweis: dann wie früher F12 → USB-Stick wählen.
 Vor dem Flotteneinsatz **ein** Gerät mit GroupTag `SLGTEST` komplett durchlaufen
 lassen und die Punkte aus [Kapitel 8](#8-offene-hardware-verifikationen) abhaken.
 
+### 2.7 Intune-Feinschliff: Autopilot-Profil (optional, keine Script-Änderung)
+
+Die Windows-Taste ×5 → Provision → **Reseal** sind von Microsoft bewusst
+interaktiv (kein unterstützter Autostart; Self-Deploying ist für Hybrid Join
+ausgeschlossen). Was sich aber sehr wohl reduzieren lässt: die **End-OOBE nach
+dem Reseal** — per Einstellungen im Autopilot-Deployment-Profil (Intune-Portal,
+kein HEPHAISTOS-Bestandteil):
+
+| Profileinstellung | Wirkung |
+|---|---|
+| Microsoft-Software-Lizenzbedingungen: **Ausblenden** | EULA-Seite entfällt |
+| Datenschutzeinstellungen: **Ausblenden** | Privacy-Seite entfällt (Hinweis: Ortungsdienste sind dann standardmäßig aus — bei Bedarf per Intune-Richtlinie aktivieren) |
+| Optionen zum Ändern des Kontos: **Ausblenden** | erfordert Entra-Company-Branding |
+| Sprache/Region **fest** + Tastatur **automatisch konfigurieren** | Sprach-/Tastaturseiten entfallen — **nur mit LAN/Dock** (bei WLAN müssen die Seiten für die WLAN-Auswahl sichtbar bleiben) |
+
+Damit schrumpft der Endnutzer-Teil auf: einschalten → Anmeldung → Desktop.
+Zwei Praxis-Hinweise: Mit fester Sprache springt die OOBE schnell zur
+Anmeldeseite — die Windows-Taste ×5 für das Pre-Provisioning funktioniert auch
+dort. Und seit dem Januar-2026-Update gibt es einen bekannten, von Microsoft
+noch offenen Fehler, dass nach dem Reseal der Benutzername (UPN) manuell
+einzutippen ist, statt vorausgefüllt zu sein.
+
 ---
 
 ## 3. Ablauf pro Gerät
@@ -189,32 +211,44 @@ Der Stick bleibt während **aller** Phasen eingesteckt (Logs, State, CCTK, Secre
 
 1. Gerät einschalten, **F12** drücken, den USB-Stick (UEFI-Eintrag) booten.
 2. OSDCloud-WinPE startet und lädt `boot/Start-Hephaistos.ps1` aus GitHub
-   (LAN bevorzugt; WLAN wird vom OSDCloud-WinPE unterstützt). Das Versions-Banner
-   zeigt Version, Quelle, Modell und Service Tag.
-3. **Technikername** eingeben (Pflichtfeld, Freitext). Der Name wird auf dem Stick
-   gespeichert und bei der Abnahme als Vorschlag angeboten.
-4. **Sprache** wählen: `1` = Deutsch (Default, Enter genügt), `2` = Français,
-   `3` = Polski.
-5. **Group Tag** bestätigen (ab v1.1.0): Der zur Sprache passende Tag ist
-   vorausgewählt — Enter übernimmt ihn; in der OOBE-Phase genügt später ebenfalls
-   Enter.
-6. **ROTER Warnblock:** Es folgt ein kompletter Disk-Wipe. Modell und Service Tag
-   werden angezeigt. Zum Bestätigen `LOESCHEN` eintippen — jede andere Eingabe
-   bricht ab; auf Nachfrage kann direkt neu gestartet werden, sonst verbleibt
-   das Gerät in der WinPE-Konsole.
-7. **Storage-Modus-Preflight** (ab v1.1.0, nur beim ersten Durchlauf): Steht das
-   Werks-BIOS auf RAID, leert das Script die Disk, stellt auf AHCI um und startet
-   neu — das Gerät bootet **automatisch wieder vom Stick** (seit v1.2.4 per
-   einmaligem UEFI-Boot-Override `BootNext`, unabhängig von der
-   Boot-Reihenfolge). Name/Sprache, Tag und die `LOESCHEN`-Bestätigung kurz
-   erneut eingeben, dann geht es direkt weiter. Kein Fehler, erwartetes
-   Verhalten. Startet das Gerät doch woanders (z. B. HTTP-Boot): F12 →
-   USB-Stick wählen.
-8. Danach läuft alles automatisch: `Start-OSDCloud -ZTI` löscht die interne Disk und
-   installiert **Windows 11 25H2** in der gewählten Sprache (ESD-Download, je nach
-   Netz ca. 20–40 Minuten). Anschließend staged das Script `C:\OSDCloud\HEPHAISTOS\`
-   (oobe.cmd, Repo-Spiegel, Gerätedaten) und startet nach einem 10-Sekunden-Countdown
-   neu.
+   (LAN bevorzugt; WLAN wird vom OSDCloud-WinPE unterstützt). Ab v1.3.0 stellt
+   das Script zuerst die **deutsche Tastatur** ein (die Konsole startet dafür
+   einmalig neu — kein Fehler) — Passphrase und `LOESCHEN` tippen sich damit
+   ohne Y/Z-Falle. Das Versions-Banner zeigt Version, Quelle, Modell und
+   Service Tag.
+3. **Der eine Eingabeblock** (ab v1.3.0 alles an einem Stück, danach ist bis
+   zur Windows-Taste ×5 nichts mehr zu tun):
+   - **Technikername** (Pflichtfeld; Enter übernimmt den Namen vom letzten
+     Lauf, falls vorhanden),
+   - **Sprache** (`1` = Deutsch, Enter genügt),
+   - **Group Tag** (aus der Sprache vorausgewählt, Enter genügt),
+   - **ROTER Warnblock** → `LOESCHEN` eintippen (jede andere Eingabe bricht ab),
+   - **Team-Passphrase** — wird **sofort geprüft** (Tippfehler fallen hier auf,
+     nicht erst in der Specialize-Konsole). 3× falsch/kein Blob: kein Abbruch —
+     die Installation läuft weiter und die Specialize-Phase fragt wie früher.
+     (Konfigurierbar über `Oobe.PassphraseUpfront`.)
+     **RAID-Werksgerät:** Die Passphrase kommt erst in dem Durchlauf dran, der
+     wirklich installiert — steht das BIOS noch auf RAID, rebootet das Gerät
+     zuerst (nächster Punkt) und fragt die Passphrase dann in Lauf 2 (sie wird
+     bewusst nirgends zwischengespeichert).
+4. **Storage-Modus-Preflight** (nur beim ersten Durchlauf): Steht das Werks-BIOS
+   auf RAID, leert das Script die Disk, stellt auf AHCI um und startet neu — das
+   Gerät bootet per `BootNext` **automatisch wieder vom Stick**. Ab v1.3.0
+   erscheint dann eine **Wiederanlauf-Zusammenfassung** (Gerät, Techniker,
+   Sprache, Tag) mit 15-Sekunden-Countdown: nichts drücken = es läuft ohne
+   Neu-Eintippen weiter, nur die Passphrase wird in Lauf 2 abgefragt (erste und
+   einzige Eingabe dort); beliebige Taste = normale Eingabe. Der Wiederanlauf
+   greift nur, wenn Seriennummer/Modell live passen, die Zustimmung aus GENAU
+   diesem Umstell-Zyklus stammt (Einmal-Nonce) und **alle internen Disks
+   nachweislich leer sind** — sonst wird ganz normal gefragt.
+5. Danach läuft alles automatisch: `Start-OSDCloud -ZTI` installiert
+   **Windows 11 25H2** in der gewählten Sprache (ESD-Download, je nach Netz ca.
+   20–40 Minuten). Anschließend staged das Script `C:\OSDCloud\HEPHAISTOS\`
+   (oobe.cmd, Repo-Spiegel, Gerätedaten) und schreibt den
+   **Split-Key-Handoff**: die in Schritt 3 entsperrten Zugänge, verschlüsselt
+   mit einem Einmal-Schlüssel — Daten auf `C:`, Schlüssel auf dem Stick. Jede
+   Hälfte allein ist wertlos; die Specialize-Phase verbraucht beide und löscht
+   sie sofort. Neustart nach 10-Sekunden-Countdown.
 
 Erst mit der `LOESCHEN`-Bestätigung wird das Flag `step2_osinstall.started`
 geschrieben — ein Abbruch hinterlässt keinen falschen Status (behobener Fehler der
@@ -224,9 +258,11 @@ alten Version).
 
 **Autostart (ab v1.2.0, Default an):** Ist `Oobe.AutoLaunch` aktiv, öffnet sich
 die HEPHAISTOS-Konsole nach dem Neustart **automatisch** während „Geräte werden
-vorbereitet" (Specialize-Pass des Windows-Setups) — Shift+F10 entfällt. Das
-GroupTag und der Technikername werden automatisch aus der WinPE-Phase
-übernommen; nur die **Team-Passphrase** wird noch abgefragt. Das anschließende
+vorbereitet" (Specialize-Pass des Windows-Setups) — Shift+F10 entfällt. GroupTag
+und Technikername kommen automatisch aus der WinPE-Phase; die Zugänge für den
+Hash-Upload kommen ab v1.3.0 aus dem **Split-Key-Handoff** — es ist also
+**keine Passphrase-Eingabe mehr nötig** (nur falls der Handoff fehlt oder
+ungültig ist, erscheint der Passphrase-Prompt wie früher). Das anschließende
 Profilzuweisungs-Polling (bis zu 30 min) läuft sichtbar in dieser Konsole —
 das Setup ist dann nicht „hängen geblieben". Nach bestätigter Profilzuweisung fährt
 das Setup einfach fort und die OOBE startet **ohne zusätzlichen Neustart**
@@ -277,9 +313,11 @@ aus:
      (Backup, Kopie im Geräteordner).
    - **GroupTag** wählen: `SLGDE` / `SLGFR` / `SLGPL` / `SLGTEST` — wird direkt in
      die CSV eingetragen und beim Upload mitgegeben.
-   - Online-Upload nach Intune mit dem gespeicherten App-Zugang
-     (**Team-Passphrase** wird abgefragt). Ohne Netz oder ohne Passphrase bleibt die
-     Offline-CSV gesichert; der Import kann später manuell erfolgen.
+   - Online-Upload nach Intune mit dem gespeicherten App-Zugang. Die Zugänge
+     kommen ab v1.3.0 aus dem **WinPE-Handoff** (keine Passphrase-Eingabe);
+     nur wenn der Handoff fehlt oder ungültig ist, wird die **Team-Passphrase**
+     abgefragt. Ohne Netz oder ohne Zugänge bleibt die Offline-CSV gesichert;
+     der Import kann später manuell erfolgen.
 4. **Profilzuweisungs-Polling:** Nach erfolgreichem Upload fragt das Script alle
    30 Sekunden (max. 30 Minuten, mit Fortschrittsanzeige) den Zuweisungsstatus des
    Autopilot-Deployment-Profils ab.
@@ -407,6 +445,7 @@ auf GitHub wirken sofort auf alle Sticks. Offline greift der Stick-Spiegel
 | `Bios.StorageMode` | Ziel-Storage-Modus, Default `Ahci` — wird VOR der Installation in WinPE geprüft/gesetzt; `Keep` = Preflight aus (ab v1.1.0, siehe [2.5](#25-cctk-und-vc-runtime-auf-den-stick-kopieren-manuell)) |
 | `Bios.DefaultPackage` / `Bios.Packages` | Standard- bzw. modell-spezifische CCTK-Paketordner unter `_HEPHAISTOS\Tools\` (ab v1.1.0, siehe [2.5](#25-cctk-und-vc-runtime-auf-den-stick-kopieren-manuell)) |
 | `Oobe.AutoLaunch` | Default `true` — OOBE-Phase startet automatisch aus dem Windows-Setup (Specialize); `false` = manuell per Shift+F10 + `c:\o` (ab v1.2.0) |
+| `Oobe.PassphraseUpfront` | Default `true` — Team-Passphrase wird schon in WinPE abgefragt und per Split-Key-Handoff übergeben; `false` = Passphrase-Prompt wie früher erst in der Specialize-Konsole (ab v1.3.0) |
 | `Abnahme.AutoRun` / `Abnahme.DelayMinutes` | Default `true` / `5` — Abnahme läuft nach dem Provisioning automatisch (geplante Aufgabe, nicht-interaktiv); `false` = nur manuell (ab v1.2.0) |
 | `MinBuild` | Mindest-Build für die Abnahme, Default **26200** (= 25H2). Eine Quelle für WinPE und Abnahme. |
 | `RemoveWinRE` | Default `false` — siehe [5.3](#53-removewinre-flag-mit-konsequenzen) |
@@ -616,11 +655,19 @@ folgt zwingend:
    Seriennummern/Hostnamen echter Geräte.
    **Erlaubt:** Hostname-Konvention `SLG(DE|FR|PL|TEST)-`, GroupTag-Namen,
    Dienstnamen, Produktnamen.
-2. **Alle Geheimnisse liegen ausschließlich verschlüsselt auf dem Stick:**
+2. **Alle Geheimnisse liegen dauerhaft nur verschlüsselt auf dem Stick:**
    `E:\HEPHAISTOS-Secrets\hephaistos.secrets.enc.json` (AES-256, PBKDF2-SHA-256,
    600.000 Iterationen). Enthält: TenantId, AppId, AppSecret, ReportRecipient,
    TeamsWebhookUrl, MailSender. Alt-Blobs werden beim nächsten Entsperren
    automatisch auf das neue Verfahren migriert.
+   **Vorübergehende Ausnahme (v1.3.0, Minuten-Fenster):** Der Split-Key-Handoff
+   legt zwischen Staging und Specialize-Konsum einen AES-verschlüsselten
+   Auszug (Upload-Felder) auf `C:` und den zufälligen Einmal-Schlüssel auf dem
+   Stick ab — jede Hälfte allein ist wertlos, beide werden beim Verbrauch
+   überschrieben und gelöscht (One-Shot, TTL 24 h, Sweeps in WinPE und
+   Abnahme). Einziges neues Risiko: Diebstahl BEIDER Medien in genau diesem
+   Fenster — kleiner als das ohnehin akzeptierte Stick-Diebstahl-Szenario;
+   Gegenmittel bleibt die Rotation von App-Secret/Webhook in Entra ID.
 3. Die **Team-Passphrase** wird nur mündlich/teamintern weitergegeben — niemals auf
    dem Stick oder im Repo notieren.
 4. Die **Teams-Webhook-URL wie ein Secret behandeln** — wer sie hat, kann in den
@@ -663,6 +710,23 @@ Flotteneinsatz auf einem Testgerät (GroupTag `SLGTEST`) abzuhaken:
       gesetzt (BootNext)"); die dauerhafte Boot-Reihenfolge im BIOS bleibt
       unverändert. (Feldtest davor: HTTP-Boot an erster Stelle fing den Neustart
       ab.)
+- [ ] **WinPE-Tastatur (v1.3.0):** Beim Start erscheint „Deutsche Tastatur
+      aktiviert — die Konsole startet einmalig neu", danach tippen sich
+      Y/Z und Sonderzeichen korrekt (Passphrase-Probe!). Falls der Selbst-
+      Neustart scheitert: gelber Hinweis + US-Layout wie bisher.
+- [ ] **Preflight-Wiederanlauf (v1.3.0):** Auf einem RAID-Werksgerät nach dem
+      automatischen Neustart erscheint die Wiederanlauf-Zusammenfassung mit
+      15-s-Countdown; ohne Tastendruck läuft alles bis zur Passphrase-Abfrage
+      durch. Gegenprobe: Taste drücken → normale Eingabe; und ein DRITTER
+      Stick-Boot (nach abgeschlossenem Zyklus) fragt wieder komplett
+      interaktiv (One-Shot-Zustimmung).
+- [ ] **Split-Key-Handoff (v1.3.0):** Passphrase in WinPE eingeben; in der
+      Specialize-Konsole erscheint „Zugänge aus dem WinPE-Handoff übernommen"
+      und es kommt KEIN Passphrase-Prompt mehr; danach existieren weder
+      `C:\OSDCloud\HEPHAISTOS\handoff.enc.json` noch
+      `<Stick>:\Logs\<Serial>\state\handoff.key.json` mehr. Gegenprobe:
+      Passphrase in WinPE 3× falsch → Installation läuft trotzdem, Specialize
+      fragt wie früher.
 
 - [ ] **CCTK auf Dell Pro 16 Plus:** vorentpacktes Paket (`applyconfig.bat`) und
       SCE-Fallback inkl. VC++-Workaround anwenden, Exit-Code 0, BIOS-Einstellungen

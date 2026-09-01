@@ -14,7 +14,7 @@
       - Gerätedaten kommen als Parameter - kein Zugriff mehr auf die
         Script-Variablen des alten Menüscripts.
 .NOTES
-    HEPHAISTOS v1.2.4 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
+    HEPHAISTOS v1.3.0 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
     Benötigt PowerShell 5.1. Datei ist UTF-8 MIT BOM gespeichert (Pflicht für PS 5.1 + Umlaute).
 #>
 
