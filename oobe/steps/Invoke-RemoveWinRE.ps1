@@ -16,7 +16,7 @@
     WinRE-Partition wieder angelegt hat (reagentc /info) - das Setup stellt
     sie ggf. neu her.
 .NOTES
-    HEPHAISTOS v1.3.0 - neuer Schritt nach Handoff §4.7 (kein Pendant im
+    HEPHAISTOS v1.3.1 - neuer Schritt nach Handoff §4.7 (kein Pendant im
     USB_ScriptTool Rev05). PowerShell 5.1. UTF-8 mit BOM.
 #>
 param([hashtable]$Context)

@@ -14,7 +14,7 @@
            (bei zugewiesenem Profil: automatischer Neustart in das Provisioning)
     Status pro Gerät: <Stick>:\Logs\<ServiceTag>\state\*.done
 .NOTES
-    HEPHAISTOS v1.3.0 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
+    HEPHAISTOS v1.3.1 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
     Benötigt PowerShell 5.1 (OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM gespeichert
     (Pflicht für PS 5.1 + Umlaute).
 #>
@@ -25,7 +25,7 @@ $Check = [char]0x2713   # Haken-Symbol, zur Laufzeit erzeugt (ASCII-sichere Quel
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.3.0'
+$Script:HephVersion = '1.3.1'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots dieser Phase (OOBE): zuerst die gestagte Kopie auf C:, dann der
 # Stick. Der Stick wird hier per Minimal-Suche gefunden (DriveInfo-Schleife nach
@@ -275,13 +275,43 @@ if ($cfg.Abnahme -and $cfg.Abnahme.AutoRun -eq $true) {
         $aaTrigger   = New-ScheduledTaskTrigger -AtLogOn
         $aaTrigger.Delay = ('PT{0}M' -f $delayMin)
         $aaPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-        Register-ScheduledTask -TaskName 'HEPHAISTOS-AutoAbnahme' -Action $aaAction -Trigger $aaTrigger -Principal $aaPrincipal -Force | Out-Null
+        # v1.3.1 (Review-MAJOR): Ohne diese Settings startet der Task Scheduler
+        # die Aufgabe NICHT im Akkubetrieb - bei Notebooks der Normalfall.
+        $aaSettings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        Register-ScheduledTask -TaskName 'HEPHAISTOS-AutoAbnahme' -Action $aaAction -Trigger $aaTrigger -Principal $aaPrincipal -Settings $aaSettings -Force | Out-Null
         Write-HephOk ('Auto-Abnahme vorgemerkt: startet {0} min nach der ersten Anmeldung nach dem Provisioning (entfernt sich nach bestandener Abnahme selbst).' -f $delayMin)
     } catch {
         Write-HephWarn ('Auto-Abnahme konnte nicht vorgemerkt werden ({0}) - Abnahme manuell per START-ABNAHME.cmd.' -f $_.Exception.Message)
     }
 } else {
     Write-HephDim 'Auto-Abnahme deaktiviert (deploy.json Abnahme.AutoRun) - Abnahme manuell per START-ABNAHME.cmd.'
+}
+
+# v1.3.1: Device-Ready-Meldung (deploy.json Abnahme.ReadyMessage; fehlender
+# Schlüssel = an, explizit false = aus): Ein Wächter prüft bei jedem
+# Systemstart, ob das Gerät fertig provisioniert am Anmeldebildschirm steht
+# (enrolled + IME, kein Benutzerprofil, niemand angemeldet - auch nach
+# Kontrollpause nicht) und postet dann EINMAL die "bitte anmelden"-Karte über
+# den DPAPI-Webhook-Cache. Danach entfernt sich die Aufgabe selbst.
+if ($cfg.Abnahme -and ($cfg.Abnahme.PSObject.Properties['ReadyMessage']) -and ($cfg.Abnahme.ReadyMessage -eq $false)) {
+    Write-HephDim 'Device-Ready-Meldung deaktiviert (deploy.json Abnahme.ReadyMessage).'
+} else {
+    try {
+        $drScript = Join-Path $StagedRoot 'Fallback\abnahme\Invoke-DeviceReady.ps1'
+        if (-not (Test-Path $drScript)) { throw ('Datei fehlt: {0}' -f $drScript) }
+        $drAction    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f $drScript)
+        $drTrigger   = New-ScheduledTaskTrigger -AtStartup
+        $drTrigger.Delay = 'PT3M'
+        $drPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+        # v1.3.1 (Review-MAJOR): Boot-Trigger werten die Akku-Bedingung nur beim
+        # Auslösen aus - ohne diese Settings käme auf einem ungesteckten
+        # Notebook NIE eine Karte (kein Retry wie beim Anmelde-Trigger).
+        $drSettings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        Register-ScheduledTask -TaskName 'HEPHAISTOS-DeviceReady' -Action $drAction -Trigger $drTrigger -Principal $drPrincipal -Settings $drSettings -Force | Out-Null
+        Write-HephOk 'Device-Ready-Meldung vorgemerkt: Teams-Karte, sobald das Gerät fertig am Anmeldebildschirm steht.'
+    } catch {
+        Write-HephWarn ('Device-Ready-Meldung konnte nicht vorgemerkt werden ({0}) - entfällt.' -f $_.Exception.Message)
+    }
 }
 
 # ============================================================ Schritte ausführen

@@ -22,7 +22,7 @@
   "RemoveWinRE": false,
   "GroupTags": ["SLGDE", "SLGFR", "SLGPL", "SLGTEST"],
   "Oobe": { "AutoLaunch": true, "PassphraseUpfront": true },
-  "Abnahme": { "AutoRun": true, "DelayMinutes": 5 },
+  "Abnahme": { "AutoRun": true, "DelayMinutes": 5, "ReadyMessage": true },
   "Report": { "TeamsAttachPdf": true },
   "Repo": { "RawBase": "https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main" }
 }

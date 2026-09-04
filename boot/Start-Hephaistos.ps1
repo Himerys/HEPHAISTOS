@@ -15,7 +15,7 @@
         [7] Neustart via wpeutil reboot (10-Sekunden-Countdown)
     Status pro Gerät: <Stick>\Logs\<ServiceTag>\state\*.done (Flag-Namen wie im Original).
 .NOTES
-    HEPHAISTOS v1.3.0 - portiert aus USB_ScriptTool Rev05 (START-ONBOARDING.cmd +
+    HEPHAISTOS v1.3.1 - portiert aus USB_ScriptTool Rev05 (START-ONBOARDING.cmd +
     SLG-Onboarding.ps1). PowerShell 5.1. UTF-8 mit BOM (Pflicht für PS 5.1 + Umlaute).
     Bugfix (Handoff 7.1): step2_osinstall.started wird ERST unmittelbar vor
     Start-OSDCloud geschrieben - nicht schon bei der Menüauswahl wie im alten
@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.3.0'
+$Script:HephVersion = '1.3.1'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 
 # ============================================================ Tastatur-Layout (v1.3.0)
@@ -872,6 +872,7 @@ if ($stagingOk) {
             'oobe\steps\Invoke-AutopilotHash.ps1',
             'abnahme\Test-HephaistosDevice.ps1',
             'abnahme\Invoke-AutoAbnahme.ps1',
+            'abnahme\Invoke-DeviceReady.ps1',
             'abnahme\report\New-HephaistosHtmlReport.ps1',
             'abnahme\report\Convert-HtmlToPdf.ps1',
             'abnahme\report\Send-TeamsCard.ps1',

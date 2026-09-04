@@ -12,14 +12,14 @@
           werden beim nächsten Entsperren automatisch neu verschlüsselt)
         - Graph-App-Token (client_credentials), Technikername, VC++-Runtime-Workaround
 .NOTES
-    HEPHAISTOS v1.3.0 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
+    HEPHAISTOS v1.3.1 - portiert aus USB_ScriptTool Rev05 (_SLG\SLG-Onboarding.ps1).
     Benötigt PowerShell 5.1 (WinPE/OOBE/Win11 Standard). Datei ist UTF-8 MIT BOM
     gespeichert (Pflicht für PS 5.1 + Umlaute).
 #>
 
 # ============================================================ Version (zentral)
 # Eine Quelle für Banner, Report-Header UND Report-Footer (behebt Rev04/Rev05-Drift).
-$HephaistosVersion = '1.3.0'
+$HephaistosVersion = '1.3.1'
 
 # Konsole auf UTF-8, damit Haken/Linien-Zeichen sauber dargestellt werden
 # (in WinPE/OOBE nicht immer möglich - best effort wie im Original).
@@ -771,7 +771,7 @@ Block WORTGLEICH am Anfang - nur die FallbackRoots-Zeile wird je Phase angepasst
 (Reihenfolge: Staged (C:) vor Stick, siehe SPEC §7.x der jeweiligen Datei).
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.3.0'
+$Script:HephVersion = '1.3.1'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots je Phase; Beispiel OOBE: Staged (C:) zuerst, dann Stick.
 $Script:HephFallbackRoots = @('C:\OSDCloud\HEPHAISTOS\Fallback')

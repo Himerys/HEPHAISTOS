@@ -1,6 +1,6 @@
 # HEPHAISTOS — Techniker-Anleitung
 
-**SLG Notebook-Onboarding (HEPHAISTOS) v1.3.0** — portiert und korrigiert aus dem
+**SLG Notebook-Onboarding (HEPHAISTOS) v1.3.1** — portiert und korrigiert aus dem
 USB_ScriptTool (Rev03–Rev05). Diese Anleitung beschreibt den **neuen** Ablauf:
 kompletter Disk-Wipe via OSDCloud, Neuaufbau nach Vorlage, alle Scripts kommen zur
 Laufzeit aus dem GitHub-Repo. Der USB-Stick ist statisch und wartungsfrei.
@@ -347,6 +347,23 @@ Auto-Reboot (manueller Weg) durchläuft das Gerät das Autopilot-Provisioning wi
 (Hybrid Entra Join, unverändertes Join-Modell). Danach folgt die Abnahme
 ([Kapitel 4](#4-abnahme-und-reports)).
 
+**Device-Ready-Meldung (ab v1.3.1, `Abnahme.ReadyMessage`, Default an):** Steht
+das Gerät nach Reseal und letztem Boot fertig am **Anmeldebildschirm**, postet
+ein Start-Wächter einmalig eine Teams-Karte in den bestehenden Kanal:
+Hostname, Modell, Service Tag + „bitte anmelden, um die Abnahme zu starten"
+(mit Hinweis auf das LAPS-Kennwort in Intune und einem Link auf die
+Intune-Geräteliste). Quelle ist der DPAPI-Webhook-Cache aus der OOBE-Phase —
+keine Passphrase, kein Stick, keine zusätzlichen Berechtigungen. Erkennung per
+Heuristik (enrolled + IME vorhanden, noch kein Benutzerprofil, niemand
+angemeldet — auch nach 60 s Kontrollpause nicht); meldet sich jemand schneller
+an, entfällt die Karte einfach und die Aufgabe räumt sich weg
+(`deviceready.log` im Staging-Ordner). Hinweis zum **benutzergesteuerten**
+Ablauf (ohne Pre-Provisioning): Dort kann die Karte schon am Anmeldebildschirm
+nach der Geräte-Phase des ESP erscheinen — operativ passt das trotzdem, denn
+genau dort meldet sich der lokale Admin für die Abnahme an. Die Garantie
+„keine Karte während der Zwischenboots" gilt für den
+Pre-Provisioning-Ablauf (defaultuser-Erkennung).
+
 > **VORSICHT — Autopilot-Pre-Provisioning (White Glove):** Pre-Provisioning in
 > Kombination mit **Hybrid Join** ist die fehleranfälligste Autopilot-Kombination.
 > Das Auto-Reseal-Verhalten (Windows 11 24H2+) ist auf unserer Hardware **noch nicht
@@ -447,6 +464,7 @@ auf GitHub wirken sofort auf alle Sticks. Offline greift der Stick-Spiegel
 | `Oobe.AutoLaunch` | Default `true` — OOBE-Phase startet automatisch aus dem Windows-Setup (Specialize); `false` = manuell per Shift+F10 + `c:\o` (ab v1.2.0) |
 | `Oobe.PassphraseUpfront` | Default `true` — Team-Passphrase wird schon in WinPE abgefragt und per Split-Key-Handoff übergeben; `false` = Passphrase-Prompt wie früher erst in der Specialize-Konsole (ab v1.3.0) |
 | `Abnahme.AutoRun` / `Abnahme.DelayMinutes` | Default `true` / `5` — Abnahme läuft nach dem Provisioning automatisch (geplante Aufgabe, nicht-interaktiv); `false` = nur manuell (ab v1.2.0) |
+| `Abnahme.ReadyMessage` | fehlend/`true` = Teams-Karte „Gerät fertig — bitte anmelden", sobald das Gerät nach dem Provisioning am Anmeldebildschirm steht; explizit `false` = aus (ab v1.3.1) |
 | `MinBuild` | Mindest-Build für die Abnahme, Default **26200** (= 25H2). Eine Quelle für WinPE und Abnahme. |
 | `RemoveWinRE` | Default `false` — siehe [5.3](#53-removewinre-flag-mit-konsequenzen) |
 | `GroupTags` | Auswahlreihenfolge im Hash-Schritt (`SLGDE`, `SLGFR`, `SLGPL`, `SLGTEST`) |
@@ -727,6 +745,19 @@ Flotteneinsatz auf einem Testgerät (GroupTag `SLGTEST`) abzuhaken:
       `<Stick>:\Logs\<Serial>\state\handoff.key.json` mehr. Gegenprobe:
       Passphrase in WinPE 3× falsch → Installation läuft trotzdem, Specialize
       fragt wie früher.
+- [ ] **Device-Ready-Meldung (v1.3.1):** Nach Reseal + Einschalten steht das
+      Gerät am Anmeldebildschirm und wenige Minuten später erscheint die
+      Teams-Karte „GERÄT FERTIG EINGERICHTET" (Hostname/Modell/Service Tag) —
+      auch im **Akkubetrieb** und auch nach **Herunterfahren + Kaltstart**
+      (nicht nur nach einem Neustart; Fast-Startup-Verdacht, falls die Karte
+      nur nach Neustarts kommt). Im Pre-Provisioning-Ablauf darf während der
+      Zwischenboots (defaultuser-Phasen) KEINE Karte kommen
+      (`C:\OSDCloud\HEPHAISTOS\deviceready.log` prüfen); im benutzergesteuerten
+      Ablauf ist die Karte am Anmeldebildschirm nach der ESP-Gerätephase
+      erwartetes Verhalten. Zusätzlich prüfen: Der Power-Automate-Flow rendert
+      auch eine Karte OHNE PDF-Anhang (`slg`-Feld fehlt hier bewusst).
+      Gegenprobe: sofort nach dem Einschalten anmelden → keine Karte, Aufgabe
+      `HEPHAISTOS-DeviceReady` entfernt sich trotzdem selbst.
 
 - [ ] **CCTK auf Dell Pro 16 Plus:** vorentpacktes Paket (`applyconfig.bat`) und
       SCE-Fallback inkl. VC++-Workaround anwenden, Exit-Code 0, BIOS-Einstellungen

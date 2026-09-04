@@ -1,5 +1,66 @@
 # CHANGELOG
 
+## 1.3.1 (2026-09-04) — Device-Ready-Meldung („Gerät fertig — bitte anmelden")
+
+### Neu
+
+- **Teams-Karte, sobald das Gerät fertig am Anmeldebildschirm steht**
+  (`deploy.json Abnahme.ReadyMessage`; fehlender Schlüssel = an, `false` = aus):
+  Die OOBE-Phase registriert zusätzlich die geplante Aufgabe
+  `HEPHAISTOS-DeviceReady` (SYSTEM, beim Systemstart, 3 min verzögert). Der
+  neue Wächter `abnahme/Invoke-DeviceReady.ps1` erkennt den „fertig, aber noch
+  niemand angemeldet"-Zustand über mehrere Heuristiken: Intune-Enrollment
+  vorhanden (Registry, MS DM Server) + IME-Dienst installiert + **noch kein
+  echtes Benutzerprofil** + **niemand interaktiv angemeldet — auch nach 60 s
+  Kontrollpause nicht** (beim ESP meldet sich defaultuser* binnen Sekunden
+  automatisch an; die Pre-Provisioning-Zwischenboots fallen damit durch — im
+  benutzergesteuerten Ablauf kann die Karte schon am Anmeldebildschirm nach
+  der ESP-Gerätephase kommen, was operativ genau der richtige Moment ist).
+  Dann
+  wird EINMALIG die Karte gepostet (Hostname, Modell, Service Tag, „bitte
+  anmelden, um die Abnahme zu starten", LAPS-Hinweis + Link auf die
+  Intune-Geräteliste), Done-Flag gesetzt und die Aufgabe entfernt sich selbst.
+  Meldet sich jemand schneller an (oder gab es je eine Anmeldung), entfällt
+  die Karte still und die Aufgabe räumt sich ebenfalls weg. Protokoll:
+  `C:\OSDCloud\HEPHAISTOS\deviceready.log`.
+- **Bewusst ohne Zusatz-Berechtigungen und ohne neue Secrets:** Webhook-Quelle
+  ist der bestehende DPAPI-Geräte-Cache (v1.2.1), Kanal = derselbe wie die
+  Abnahme-Karte. Der ursprünglich angedachte Deep-Link auf den
+  LAPS-Tab des Geräts bräuchte die managedDeviceId per Graph
+  (`DeviceManagementManagedDevices.Read.All`, neue App-Berechtigung) — auf
+  Team-Wunsch verworfen; stattdessen Textkarte + Link auf die Geräteliste
+  (Service Tag suchen). Wächter ist wie die Auto-Abnahme selbsttragend
+  (keine Lib-Abhängigkeit, crasht nie, wartet still).
+- Payload nutzt dasselbe AdaptiveCard-Format wie die Abnahme-Karte, ohne das
+  `slg`-PDF-Feld (das hängt im Flow nur am Datei-Anhang) — der bestehende
+  Power-Automate-Flow braucht KEINE Änderung.
+
+### Review-Härtung (adversariale Review vor Release; 1 Major gefunden und behoben)
+
+- **MAJOR behoben — Akkubetrieb:** Ohne explizite Task-Settings startet der
+  Task Scheduler geplante Aufgaben standardmäßig NUR am Netzteil - ein
+  ungestecktes Notebook hätte NIE eine Karte gepostet (Boot-Trigger werten
+  die Bedingung nur beim Auslösen aus, kein Retry). Beide HEPHAISTOS-Aufgaben
+  registrieren jetzt mit `-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries`
+  - auch die bestehende `HEPHAISTOS-AutoAbnahme` (dort war der Fehler seit
+  v1.2.0 latent, wurde aber von den Anmelde-Wiederholungen kaschiert).
+- Teams-POST mit 3 Versuchen im selben Lauf (je 60 s Abstand): Am finalen
+  Anmeldebildschirm gibt es evtl. keinen weiteren Systemstart - ein
+  transienter Netzfehler darf die Karte nicht dauerhaft kosten.
+- defaultuser-Erkennung auf `defaultuser\d+` verbreitert (Windows legt je
+  nach Build auch defaultuser1/defaultuser100000 an - die zählten sonst als
+  „echtes" Profil und hätten die Karte dauerhaft unterdrückt).
+- Doku präzisiert: Zwischenboot-Garantie gilt für den Pre-Provisioning-Ablauf;
+  Kapitel-8-Check um Akku-/Kaltstart-Probe und Flow-Toleranz (Karte ohne
+  `slg`-Feld) ergänzt.
+
+### Hardware-offen
+
+- Timing auf echter Hardware: keine Karte während der
+  Pre-Provisioning-Zwischenboots, Karte am finalen Anmeldebildschirm (auch im
+  Akkubetrieb, auch nach Kaltstart), saubere Selbst-Entfernung bei schneller
+  Anmeldung; Flow rendert die Karte auch ohne PDF-Anhang (ANLEITUNG Kapitel 8).
+
 ## 1.3.0 (2026-09-01) — Ein Eingabeblock am Anfang: Passphrase-Handoff, Preflight-Wiederanlauf, deutsche WinPE-Tastatur
 
 Ziel dieses Releases: **alle Techniker-Eingaben an den Anfang ziehen.** Danach
