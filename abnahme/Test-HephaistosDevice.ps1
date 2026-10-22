@@ -676,6 +676,9 @@ switch ($resultState) {
         Write-Host 'Abnahme BESTANDEN - mit Hinweisen (gelbe Punkte im Report).' -ForegroundColor Yellow
     }
     default {
+        # Review 10/2026: ein früheres "bestanden" darf ein aktuelles FAILED
+        # nicht überdecken (die Auto-Abnahme wertet das Flag als Erfolg).
+        try { Remove-Item -Path (Get-StepFlag -StateDir $StateDir -Name 'step4_compliance.done') -Force -ErrorAction SilentlyContinue } catch { }
         Write-Host 'Abnahme NICHT bestanden - Schritt bleibt offen. Troubleshooting durchführen.' -ForegroundColor Red
     }
 }

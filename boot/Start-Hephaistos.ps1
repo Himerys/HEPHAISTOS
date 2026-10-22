@@ -637,6 +637,13 @@ if ($storageTarget -and ($storageTarget -notin @('Keep','None',''))) {
             if ($qOut) { Write-HephDim ('  cctk-Ausgabe: {0}' -f (($qOut -split "`r?`n" | Where-Object { $_ } | Select-Object -First 2) -join ' | ')) }
         } elseif ($cur -ieq $storageTarget) {
             Write-HephDim ('Storage-Modus bereits {0} - kein Preflight nötig.' -f $cur)
+            # Review 10/2026: Modus passt -> Schutz-/Merker-Flags früherer Läufe
+            # sind erledigt. Sonst greift nach einem BIOS-Reset/Board-Tausch beim
+            # nächsten Aufsetzen der "bereits umgestellt"-Zweig statt der Automatik,
+            # und ein altes storage_mode.keep sperrt das CCTK-Paket in der OOBE.
+            foreach ($sf in @('storage_mode.attempted', 'storage_mode.keep')) {
+                try { Remove-Item -Path (Get-StepFlag -StateDir $StateDir -Name $sf) -Force -ErrorAction SilentlyContinue } catch { }
+            }
         } else {
             Write-HephWarn ('Storage-Modus ist "{0}", Ziel ist "{1}" (deploy.json Bios.StorageMode).' -f $cur, $storageTarget)
             $secondRun = Test-Step -StateDir $StateDir -Name 'storage_mode.attempted'
@@ -784,6 +791,25 @@ Write-HephPhase -Title 'Windows-Installation (OSDCloud ZTI)' -EstimatedDuration 
 # im alten START-ONBOARDING.cmd. Die step2-Auto-Erkennung der OOBE-Phase vergleicht
 # das OS-Installationsdatum gegen den Zeitstempel dieses Flags.
 $wipeStartedUtc = (Get-Date).ToUniversalTime()
+# Review 10/2026: Status-Flags einer FRÜHEREN Installation dieses Geräts
+# archivieren. Sonst hält z.B. die Auto-Abnahme ein neu aufgesetztes Gerät
+# wegen eines alten step4_compliance.done für "bereits bestanden" und entfernt
+# sich ohne Prüfung. storage_mode.attempted ist hier ebenfalls verbraucht (die
+# Nonce-Prüfung des Wiederanlaufs lief oben schon). storage_mode.keep bleibt:
+# es wurde ggf. in DIESEM Lauf gesetzt und wird in der OOBE gebraucht.
+$staleFlags = @('step1_bios.done', 'step2_osinstall.started', 'step2_osinstall.done', 'step3_hash.done', 'step4_compliance.done', 'storage_mode.attempted')
+$archiveDir = Join-Path $StateDir ('archive\{0:yyyyMMdd-HHmmss}' -f (Get-Date))
+foreach ($sf in $staleFlags) {
+    $sfPath = Get-StepFlag -StateDir $StateDir -Name $sf
+    if (-not (Test-Path $sfPath)) { continue }
+    try {
+        if (-not (Test-Path $archiveDir)) { $null = New-Item -Path $archiveDir -ItemType Directory -Force }
+        Move-Item -Path $sfPath -Destination $archiveDir -Force -ErrorAction Stop
+    } catch {
+        try { Remove-Item -Path $sfPath -Force -ErrorAction Stop } catch { Write-HephWarn ('Altes Flag {0} konnte nicht entfernt werden: {1}' -f $sf, $_.Exception.Message) }
+    }
+}
+if (Test-Path $archiveDir) { Write-HephDim ('Status-Flags einer früheren Installation archiviert: {0}' -f $archiveDir) }
 Set-Step -StateDir $StateDir -Name 'step2_osinstall.started' -Detail ('{0}, Sprache {1}' -f $osName, $lang)
 try {
     Start-OSDCloud -OSName $osName -OSEdition $cfg.OS.OSEdition -OSActivation $cfg.OS.OSActivation -OSLanguage $lang -ZTI
