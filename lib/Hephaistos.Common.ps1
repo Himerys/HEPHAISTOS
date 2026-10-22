@@ -384,7 +384,14 @@ function Unprotect-HephaistosSecret {
         }
         $aes = [Security.Cryptography.Aes]::Create(); $aes.Key = $kdf.GetBytes(32); $aes.IV = [Convert]::FromBase64String($Blob.IV)
         $c = [Convert]::FromBase64String($Blob.Data)
-        [Text.Encoding]::UTF8.GetString($aes.CreateDecryptor().TransformFinalBlock($c, 0, $c.Length))
+        $plain = [Text.Encoding]::UTF8.GetString($aes.CreateDecryptor().TransformFinalBlock($c, 0, $c.Length))
+        # Review 10/2026: AES-CBC hat keinen MAC - etwa jede 256. FALSCHE
+        # Passphrase ergibt trotzdem gültiges Padding und damit Datenmüll statt
+        # einer Exception. Nur ein echtes JSON-Objekt gilt als Erfolg; sonst würde
+        # der Legacy-Migrationspfad den Müll über den einzigen Blob schreiben.
+        $obj = $plain | ConvertFrom-Json -ErrorAction Stop
+        if (-not ($obj -is [System.Management.Automation.PSCustomObject])) { return $null }
+        $plain
     } catch { $null }
 }
 
@@ -434,7 +441,13 @@ function Get-HephaistosSecrets {
                 # Migrationspfad (Handoff §6.1): alten Blob SOFORT mit derselben
                 # Passphrase im gehärteten v2-Format neu verschlüsseln.
                 try {
-                    Protect-HephaistosSecret -Plain $json -Pass $pass | ConvertTo-Json | Set-Content -Path $Path -Encoding ASCII
+                    # Review 10/2026: nie in-place auf FAT32/exFAT schreiben (Stick
+                    # gezogen = Blob kaputt). Erst .tmp schreiben, alten Blob als
+                    # .v1.bak sichern, dann umbenennen.
+                    $tmpPath = $Path + '.tmp'
+                    Protect-HephaistosSecret -Plain $json -Pass $pass | ConvertTo-Json | Set-Content -Path $tmpPath -Encoding ASCII
+                    Copy-Item -Path $Path -Destination ($Path + '.v1.bak') -Force
+                    Move-Item -Path $tmpPath -Destination $Path -Force
                     Write-HephOk ('Secrets-Datei auf v2-Format aktualisiert (PBKDF2-SHA256, 600000 Iterationen): {0}' -f $Path)
                 } catch {
                     Write-HephWarn ('Re-Encrypt auf v2 fehlgeschlagen - Datei bleibt im alten Format: {0}' -f $_.Exception.Message)
