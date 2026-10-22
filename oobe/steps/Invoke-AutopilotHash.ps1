@@ -93,7 +93,9 @@ try {
 
     # --- CSV im Intune-Importformat schreiben (Group Tag wird gleich automatisch befüllt) ---
     $outFile = Join-Path $hwidDir ("{0}.csv" -f $serial)
-    $line    = '"{0}","{1}","{2}",""' -f $csvSerial, $csProd.Name.Trim(), $hash
+    # Review 10/2026: "Windows Product ID" bleibt leer (wie bei Get-WindowsAutopilotInfo).
+    # Vorher stand hier der Modellname, der beim manuellen Intune-Import stört.
+    $line    = '"{0}","","{1}",""' -f $csvSerial, $hash
     Set-Content -Path $outFile -Value 'Device Serial Number,Windows Product ID,Hardware Hash,Group Tag' -Encoding ASCII
     Add-Content -Path $outFile -Value $line -Encoding ASCII
 
@@ -321,6 +323,17 @@ if ($alreadyRegistered) {
         if ($impStatus -eq 'complete') {
             Set-Step -StateDir $stateDir -Name 'step3_hash.done' -Detail ("Online-Upload nach Intune (Graph-REST), GroupTag={0}" -f $tag)
             Write-HephOk 'Hash ERFOLGREICH nach Intune hochgeladen.'
+            # Review 10/2026: Autopilot-Sync anstoßen (macht Get-WindowsAutopilotInfo
+            # -Online genauso) - ohne ihn dauert die Profilzuweisung oft deutlich
+            # länger. Rate-limitiert (429), daher best effort: ein Fehler ändert
+            # nichts am Upload-Ergebnis.
+            try {
+                Invoke-RestMethod -Method POST -Uri 'https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotSettings/sync' `
+                    -Headers @{ Authorization = "Bearer $impToken" } -ErrorAction Stop | Out-Null
+                Write-HephDim '  Autopilot-Sync angestoßen.'
+            } catch {
+                Write-HephDim ('  Autopilot-Sync nicht möglich ({0}) - Intune synchronisiert auch von selbst.' -f $_.Exception.Message)
+            }
             Write-HephDim 'Hinweis: Autopilot-Profilzuweisung kann einige Minuten dauern.'
         } elseif ($impErrCode -eq 806 -or $impErrName -eq 'ZtdDeviceAlreadyAssigned') {
             Set-Step -StateDir $stateDir -Name 'step3_hash.done' -Detail ("Bereits in Autopilot registriert (Import-Antwort 806), GroupTag={0}" -f $tag)
@@ -462,14 +475,16 @@ for ($n = 1; $n -le $maxPolls; $n++) {
     }
 
     if ($resp -and $resp.value) {
-        # Der contains()-Filter kann theoretisch mehrere Geräte liefern ->
-        # exakte Seriennummer bevorzugen, sonst erstes Ergebnis nehmen.
+        # Der contains()-Filter kann mehrere Geräte liefern -> NUR die exakte
+        # Seriennummer zählt. Review 10/2026: kein Fallback mehr auf das erste
+        # Ergebnis - dessen "assigned" hätte sonst einen Neustart ausgelöst,
+        # obwohl DIESES Gerät noch kein Profil hat. Kein Treffer = noch nicht sichtbar.
         $dev = $null
         foreach ($d in @($resp.value)) {
             if ([string]$d.serialNumber -eq $serial) { $dev = $d; break }
         }
-        if (-not $dev) { $dev = @($resp.value)[0] }
-        $status = [string]$dev.deploymentProfileAssignmentStatus
+        $status = ''
+        if ($dev) { $status = [string]$dev.deploymentProfileAssignmentStatus }
         if ($status -and $status -ne $lastStatus) {
             Write-HephDim ('  Status: {0}' -f $status)
             $lastStatus = $status
