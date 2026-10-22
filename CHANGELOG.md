@@ -1,5 +1,67 @@
 # CHANGELOG
 
+## 1.3.2 (2026-10-22) — Review-Fixes: Secrets, Status-Flags, Autopilot
+
+Ergebnis einer Code-Review von v1.3.1. Keine neuen Berechtigungen, keine
+Config-Änderung nötig (der Sync nutzt die vorhandene
+DeviceManagementServiceConfig-Berechtigung).
+
+### Behoben
+
+- **Secrets — eine falsche Passphrase konnte den Blob zerstören:** AES-CBC hat
+  keinen MAC. Etwa jede 256. falsche Passphrase ergibt trotzdem gültiges
+  Padding, die Entschlüsselung liefert dann Datenmüll statt eines Fehlers
+  (nachgestellt: 11 von 3000 Zufallsschlüsseln). Bei einem Blob im alten
+  v1-Format hat der Migrationspfad diesen Müll neu verschlüsselt und über die
+  einzige Secrets-Datei geschrieben; danach stürzte `ConvertFrom-Json` ab.
+  `Unprotect-HephaistosSecret` akzeptiert jetzt nur noch ein echtes
+  JSON-Objekt. Die v1→v2-Migration schreibt erst eine `.tmp`-Datei, sichert
+  den alten Blob als `.v1.bak` und benennt dann um (kein In-place-Schreiben
+  mehr auf FAT32/exFAT).
+- **Neu aufgesetzte Geräte wurden nicht abgenommen:** Die Status-Flags im
+  Geräteordner auf dem Stick überlebten jede Neuinstallation. Ein altes
+  `step4_compliance.done` ließ die Auto-Abnahme sofort „bereits bestanden"
+  melden und sich ohne Prüfung entfernen; der HTML-Report zeigte alte
+  Schritte als erledigt. Die WinPE-Phase verschiebt beim Wipe-Start jetzt
+  `step1_bios.done`, `step2_osinstall.started/.done`, `step3_hash.done`,
+  `step4_compliance.done` und `storage_mode.attempted` nach
+  `state\archive\<yyyyMMdd-HHmmss>\`. Eine FAILED-Abnahme löscht ein
+  vorhandenes `step4_compliance.done`.
+- **Storage-Preflight nach BIOS-Reset:** `storage_mode.attempted` und
+  `storage_mode.keep` wurden nie gelöscht. Stand ein bereits aufgesetztes
+  Gerät später wieder auf RAID (BIOS-Reset, Board-Tausch), griff der Zweig
+  „bereits umgestellt, steht aber immer noch falsch" statt der Automatik.
+  Passt der Modus, werden beide Flags jetzt entfernt.
+- **Profil-Polling konnte den Status eines fremden Geräts werten:** Ohne
+  exakten Seriennummer-Treffer nahm das Polling das erste Ergebnis des
+  `contains()`-Filters. Dessen „assigned" hätte einen Neustart ausgelöst,
+  obwohl dieses Gerät noch kein Profil hat. Es zählt jetzt nur noch der
+  exakte Treffer.
+- **Backup-CSV:** In der Spalte „Windows Product ID" stand der Modellname. Sie
+  bleibt jetzt leer (wie bei `Get-WindowsAutopilotInfo`), die CSV lässt sich
+  so direkt in Intune importieren.
+
+### Neu
+
+- **Autopilot-Sync nach dem Import:** Nach `complete` sendet der Hash-Schritt
+  `POST beta/deviceManagement/windowsAutopilotSettings/sync` (wie
+  `Get-WindowsAutopilotInfo -Online`). Best effort: Sync ist rate-limitiert,
+  ein Fehler ändert nichts am Upload-Ergebnis. Soll die oft lange Wartezeit
+  bis zur Profilzuweisung verkürzen.
+
+### Doku
+
+- `docs/DOKUMENTATION.md` von v1.0.2 auf den Stand v1.3.2 gebracht.
+- README: Ablaufdiagramm an den heutigen Ablauf angepasst (ein Eingabeblock,
+  OOBE-Autostart, Auto-Abnahme, Device-Ready-Karte).
+- ANLEITUNG: v1.3.2-Hinweise und neue Hardware-Prüfpunkte.
+
+### Hardware-offen
+
+- Erneutes Aufsetzen eines bereits abgenommenen Geräts: Flags werden
+  archiviert, die Auto-Abnahme läuft wirklich.
+- Konsole zeigt nach dem Import „Autopilot-Sync angestoßen".
+
 ## 1.3.1 (2026-09-04) — Device-Ready-Meldung („Gerät fertig — bitte anmelden")
 
 ### Neu
