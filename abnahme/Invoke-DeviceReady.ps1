@@ -21,7 +21,7 @@
     Läuft unsichtbar als SYSTEM; Protokoll: C:\OSDCloud\HEPHAISTOS\deviceready.log
     Bewusst OHNE Lib-Abhängigkeit (selbsttragend), damit die Aufgabe nie crasht.
 .NOTES
-    HEPHAISTOS v1.3.1. PowerShell 5.1. UTF-8 mit BOM.
+    HEPHAISTOS v1.3.2. PowerShell 5.1. UTF-8 mit BOM.
 #>
 $ErrorActionPreference = 'Stop'
 $TaskName = 'HEPHAISTOS-DeviceReady'
