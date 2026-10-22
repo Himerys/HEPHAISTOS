@@ -18,7 +18,7 @@
 .PARAMETER NoReport
     Nur Konsolen-/Text-/JSON-Ausgabe - HTML/PDF/Teams/Mail entfallen.
 .NOTES
-    HEPHAISTOS v1.3.1 - portiert aus USB_ScriptTool Rev05
+    HEPHAISTOS v1.3.2 - portiert aus USB_ScriptTool Rev05
     (Test-SLGDeviceOnboarding.ps1 Rev04 + Invoke-Step4Compliance aus
     SLG-Onboarding.ps1). PowerShell 5.1. UTF-8 mit BOM.
     Dreistufiges Ergebnis - unkritische Checks (Windows Update, Pending
@@ -51,7 +51,7 @@ param(
 )
 
 # --- HEPHAISTOS Lib-Bootstrap (identisch in allen Entry-Scripts) ---
-$Script:HephVersion = '1.3.1'
+$Script:HephVersion = '1.3.2'
 $Script:HephRawBase = 'https://raw.githubusercontent.com/Himerys/HEPHAISTOS/main'
 # FallbackRoots fuer die Abnahme: Stick-Fallback zuerst, dann gestagte Kopie auf C:.
 # Minimal-Suche nach dem Stick VOR dem Lib-Load (Find-HephaistosUsb liegt erst in der Lib).
@@ -676,6 +676,9 @@ switch ($resultState) {
         Write-Host 'Abnahme BESTANDEN - mit Hinweisen (gelbe Punkte im Report).' -ForegroundColor Yellow
     }
     default {
+        # Review 10/2026: ein früheres "bestanden" darf ein aktuelles FAILED
+        # nicht überdecken (die Auto-Abnahme wertet das Flag als Erfolg).
+        try { Remove-Item -Path (Get-StepFlag -StateDir $StateDir -Name 'step4_compliance.done') -Force -ErrorAction SilentlyContinue } catch { }
         Write-Host 'Abnahme NICHT bestanden - Schritt bleibt offen. Troubleshooting durchführen.' -ForegroundColor Red
     }
 }

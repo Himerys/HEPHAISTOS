@@ -1,6 +1,6 @@
 # HEPHAISTOS — Techniker-Anleitung
 
-**SLG Notebook-Onboarding (HEPHAISTOS) v1.3.1** — portiert und korrigiert aus dem
+**SLG Notebook-Onboarding (HEPHAISTOS) v1.3.2** — portiert und korrigiert aus dem
 USB_ScriptTool (Rev03–Rev05). Diese Anleitung beschreibt den **neuen** Ablauf:
 kompletter Disk-Wipe via OSDCloud, Neuaufbau nach Vorlage, alle Scripts kommen zur
 Laufzeit aus dem GitHub-Repo. Der USB-Stick ist statisch und wartungsfrei.
@@ -58,7 +58,9 @@ Techniker-PC
   OFFLINE-FALLBACK-Warnung inkl. Stand der lokalen Kopie.
 - **Status pro Gerät:** Der Stick bleibt während des gesamten Ablaufs eingesteckt.
   Alles Sichtbare liegt im Geräteordner `E:\Logs\<ServiceTag>\` (Transcripte,
-  Reports, CSV-Kopien, Technikername, Status-Flags unter `state\`).
+  Reports, CSV-Kopien, Technikername, Status-Flags unter `state\`). Wird ein
+  Gerät erneut aufgesetzt, verschiebt die WinPE-Phase beim Wipe-Start die
+  Flags der früheren Installation nach `state\archive\<Zeitstempel>\` (ab v1.3.2).
 - **Join-Modell:** Die Flotte ist **Hybrid Entra joined**. Die Abnahme prüft
   `AzureAdJoined` UND `DomainJoined` = YES. Nichts an diesem Modell ändern.
 
@@ -116,7 +118,9 @@ E:\HEPHAISTOS-Secrets\hephaistos.secrets.enc.json
 
 AES-256-verschlüsselt (PBKDF2-SHA-256, 600.000 Iterationen). Die Datei liegt **nur
 auf dem Stick**, nie im Repo. Alte Blobs (100k/SHA-1) bleiben lesbar und werden beim
-nächsten Entsperren automatisch neu verschlüsselt.
+nächsten Entsperren automatisch neu verschlüsselt. Ab v1.3.2 passiert das über eine
+`.tmp`-Datei, der alte Blob bleibt als `hephaistos.secrets.enc.json.v1.bak` daneben
+liegen (nach erfolgreichem Test löschen).
 
 ### 2.4 USB-Stick bauen (Build-USB)
 
@@ -250,9 +254,11 @@ Der Stick bleibt während **aller** Phasen eingesteckt (Logs, State, CCTK, Secre
    Hälfte allein ist wertlos; die Specialize-Phase verbraucht beide und löscht
    sie sofort. Neustart nach 10-Sekunden-Countdown.
 
-Erst mit der `LOESCHEN`-Bestätigung wird das Flag `step2_osinstall.started`
-geschrieben — ein Abbruch hinterlässt keinen falschen Status (behobener Fehler der
-alten Version).
+Das Flag `step2_osinstall.started` wird erst unmittelbar vor `Start-OSDCloud`
+geschrieben (nach Storage-Preflight und Passphrase-Abfrage), nicht schon bei der
+`LOESCHEN`-Bestätigung — ein Abbruch hinterlässt keinen falschen Status (behobener
+Fehler der alten Version). Direkt davor werden die Flags einer früheren Installation
+nach `state\archive\` verschoben (ab v1.3.2).
 
 ### 3.2 Phase 2 — OOBE: BIOS + Autopilot-Hash
 
@@ -310,7 +316,8 @@ aus:
    auf `true` steht (Default: `false`). Konsequenzen siehe [5.3](#53-removewinre-flag-mit-konsequenzen).
 3. **Autopilot-Hash:**
    - Offline-Export **immer zuerst**: CSV nach `E:\HWID\<ServiceTag>.csv`
-     (Backup, Kopie im Geräteordner).
+     (Backup, Kopie im Geräteordner). Die Spalte „Windows Product ID" bleibt
+     leer, die CSV lässt sich so direkt in Intune importieren (ab v1.3.2).
    - **GroupTag** wählen: `SLGDE` / `SLGFR` / `SLGPL` / `SLGTEST` — wird direkt in
      die CSV eingetragen und beim Upload mitgegeben.
    - Online-Upload nach Intune mit dem gespeicherten App-Zugang. Die Zugänge
@@ -318,9 +325,13 @@ aus:
      nur wenn der Handoff fehlt oder ungültig ist, wird die **Team-Passphrase**
      abgefragt. Ohne Netz oder ohne Zugänge bleibt die Offline-CSV gesichert;
      der Import kann später manuell erfolgen.
+   - Nach erfolgreichem Import stößt das Script einen **Autopilot-Sync** an
+     (ab v1.3.2, wie `Get-WindowsAutopilotInfo -Online`). Schlägt er fehl
+     (z. B. 429, Sync ist rate-limitiert), läuft alles normal weiter.
 4. **Profilzuweisungs-Polling:** Nach erfolgreichem Upload fragt das Script alle
    30 Sekunden (max. 30 Minuten, mit Fortschrittsanzeige) den Zuweisungsstatus des
-   Autopilot-Deployment-Profils ab.
+   Autopilot-Deployment-Profils ab. Gewertet wird nur ein Eintrag mit **exakt**
+   dieser Seriennummer (ab v1.3.2).
    - **Zugewiesen:** grüne Meldung, automatischer Neustart nach 10-Sekunden-Countdown —
      das Gerät bootet direkt ins Autopilot-Provisioning.
    - **Timeout:** gelbe Meldung `Profilzuweisung prüfen: Gruppenzuordnung des
@@ -339,6 +350,9 @@ DPAPI-verschlüsselt auf dem Gerät (ab v1.2.1; nur nutzbar auf genau diesem
 Gerät, verschwindet mit dem nächsten Wipe). Wurden die Secrets in der OOBE
 nicht entsperrt, entfällt die Karte still. Direkt-Mail entfällt im
 Automatik-Lauf immer (Mail kommt wie gewohnt gesammelt über SEND-REPORTS).
+Ab v1.3.2 zählt nur ein „bestanden" aus **dieser** Installation: Beim Wipe werden
+alte Flags archiviert, und eine FAILED-Abnahme löscht ein vorhandenes
+`step4_compliance.done`.
 
 ### 3.3 Phase 3 — Autopilot-Provisioning (Hybrid Join)
 
@@ -632,6 +646,10 @@ Sobald der Profilstatus „Zugewiesen" ist, das Gerät **manuell neu starten** �
 bootet dann ins Autopilot-Provisioning. Der Hash ist bereits hochgeladen; der
 Schritt muss nicht wiederholt werden.
 
+Ab v1.3.2 stößt das Script nach dem Import selbst einen Autopilot-Sync an. Steht in
+der Konsole „Autopilot-Sync nicht möglich", kann man ihn im Intune-Portal unter
+*Windows-Registrierung > Geräte (Autopilot) > Synchronisieren* von Hand auslösen.
+
 ### 6.6 Gelbe OFFLINE-FALLBACK-Warnung
 
 Eine Phase konnte GitHub nicht erreichen und nutzt die lokale Kopie (Stick bzw.
@@ -758,6 +776,15 @@ Flotteneinsatz auf einem Testgerät (GroupTag `SLGTEST`) abzuhaken:
       auch eine Karte OHNE PDF-Anhang (`slg`-Feld fehlt hier bewusst).
       Gegenprobe: sofort nach dem Einschalten anmelden → keine Karte, Aufgabe
       `HEPHAISTOS-DeviceReady` entfernt sich trotzdem selbst.
+
+- [ ] **Review-Fixes (v1.3.2):**
+      - Gerät, das schon einmal mit diesem Stick aufgesetzt wurde, erneut
+        aufsetzen: Die WinPE-Konsole meldet „Status-Flags einer früheren
+        Installation archiviert", und die Auto-Abnahme läuft danach wirklich
+        (nicht „bereits bestanden").
+      - Nach dem Hash-Import steht „Autopilot-Sync angestoßen" in der Konsole.
+      - Alter v1-Secrets-Blob (falls noch vorhanden): wird beim Entsperren
+        migriert, `…v1.bak` liegt daneben.
 
 - [ ] **CCTK auf Dell Pro 16 Plus:** vorentpacktes Paket (`applyconfig.bat`) und
       SCE-Fallback inkl. VC++-Workaround anwenden, Exit-Code 0, BIOS-Einstellungen
